@@ -1,0 +1,4 @@
+interface:
+  display_name: "GH Resolve"
+  short_description: "Resolve GitHub issues through reviewed PRs"
+  default_prompt: "Use $gh-resolve to resolve GitHub issue #123 through a reviewed pull request."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Issue Creator"
+  short_description: "Turn problems into clear GitHub issues"
+  default_prompt: "Use $gh-create-issue to turn this problem into a clear GitHub issue with goals, requirements, subtasks, and validation criteria."
