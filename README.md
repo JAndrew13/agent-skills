@@ -47,9 +47,14 @@ taking them off the interactive session's critical path:
 
 Each skill carries a **Routine trigger** note with its idempotency/skip guards,
 and gh-lead checks durable evidence before dispatching a stage a routine may
-already have run. Routine prompts should fetch the skill text from this repo
-(the target repo no longer contains it) and read PROFILE.md from the target
-repo's clone.
+already have run.
+
+Routines bind to ONE repository, so **each onboarded repo gets its own set of
+three routines** — but the prompts are repo-agnostic bootstrap shims (they
+fetch skill text from this repo and read PROFILE.md from the triggering repo's
+clone), so the canonical prompt texts in [routines/](routines/) are pasted
+unchanged into every repo's routines. Behavior changes land in the SKILL.md
+files here and propagate to all attached repos without touching any routine.
 
 ## Installing
 
