@@ -142,26 +142,31 @@ CONVENTIONS.md §8, the 2026-07-15 de-gating ("full Claude"). Codex
 
 ### 5. Post findings and set the board Status
 
-**Findings go on the PR as comments — never chat-only.** The submitter must see
-them on the PR. Prefer inline comments at the cited `file:line`; otherwise a
-top-level comment with the exact file/function reference. Keep each comment
-specific, testable, and tied to a required change.
+**Every finding goes on the PR as its own INLINE, line-anchored review comment —
+never chat-only, and never a single flat top-level dump.** Each finding must be its own
+**resolvable review thread** anchored to the exact `file:line` it concerns (like the
+`<codex-reviewer>`'s), so `gh-fixer` can reply-and-resolve it and the `isResolved` state
+is the programmatic gate. Keep each comment specific, testable, and tied to one required
+change. A finding with genuinely no single line (a missing-file / architectural gap) may
+be top-level, but anchor it to the nearest concrete `file:line` whenever one exists —
+inline is the default, not the fallback.
 
-- **Own-account PRs — the 422 self-review workaround (CONVENTIONS.md §8):**
-  `APPROVE` / `REQUEST_CHANGES` reviews can return HTTP 422. Use **COMMENT**-type
-  reviews instead, tagging each finding `[change-requested]` (a required change) or
-  `[minor]` (a nit). Do not restate the rule — reference §8.
+- **Own-account PRs — the 422 workaround makes THREADS, not flat comments
+  (CONVENTIONS.md §8):** the `APPROVE`/`REQUEST_CHANGES` review *states* 422 same-account,
+  but inline comments (resolvable threads) do not — wrap them in a **COMMENT**-event
+  review and tag each `[change-requested]` (required) or `[minor]` (nit). Follow §8's
+  recipe so each finding lands as its own `isResolved:false` thread; do not restate it.
 
 Then move the board Status via `gh project item-edit` (never a label — mechanics
 and IDs in CONVENTIONS.md §3; ownership in §5):
 
-- **Findings raised → `Reviewed`.** Any `[change-requested]` finding, or any
+- **Findings raised → `Reviewed`.** Any unresolved `[change-requested]` thread, or any
   BLOCKING reuse-review result — **this stage's own, or an already-posted Codex
   `[change-requested]` thread** — means the PR needs the fixer loop. Set Status
   `Reviewed`; `gh-fixer` picks it up.
 - **Own findings clean/addressed → `Awaiting Validation`.** When there are no
-  outstanding required-change findings from **this review stage** (adversarial
-  passes + reuse-review), advance the PR — **independent of Codex** (CONVENTIONS.md
+  unresolved (`isResolved:false`) `[change-requested]` threads from **this review stage**
+  (adversarial passes + reuse-review), advance the PR — **independent of Codex** (CONVENTIONS.md
   §8). A pending, absent, or never-posted Codex review does **not** hold this
   transition: do **not** leave the PR at `Awaiting Review` waiting on Codex, and do
   **not** set `Reviewed` merely to park it (there is nothing for the fixer to fix).
