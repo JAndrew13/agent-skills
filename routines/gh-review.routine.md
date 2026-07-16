@@ -40,9 +40,13 @@ Then, per the skill:
    unseen side effects (targeted tests only — never the full suite), tests, and
    wiring & honesty. Try to make every acceptance criterion FALSE; default to
    "unmet" when unsure; every finding must cite file:line.
-4. Post all findings on the PR as a COMMENT-type review (never
-   approve/request-changes — own-account 422), tagging each finding
-   [change-requested] or [minor], and state the head SHA you reviewed.
+4. Post EVERY finding as its OWN inline, line-anchored review comment (a
+   resolvable thread) per CONVENTIONS.md §8 + the skill's §5 — anchored to the
+   exact file:line, tagged [change-requested] or [minor], wrapped in a
+   COMMENT-event review (never approve/request-changes — own-account 422). Do NOT
+   dump findings into one flat top-level comment: that leaves no resolvable
+   PullRequestReviewThread and defeats the isResolved gate. A top-level body is
+   only for the overall verdict summary. State the head SHA you reviewed.
 5. Codex is optional, never a gate (CONVENTIONS.md §8): if the profile's
    <codex-reviewer> has ALREADY posted a review carrying unresolved actionable
    ([change-requested]) threads, note them in your PR comment so gh-fixer picks
