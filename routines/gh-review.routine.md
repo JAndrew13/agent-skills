@@ -43,10 +43,13 @@ Then, per the skill:
 4. Post all findings on the PR as a COMMENT-type review (never
    approve/request-changes — own-account 422), tagging each finding
    [change-requested] or [minor], and state the head SHA you reviewed.
-5. Check the Codex gate: the profile's <codex-reviewer> must have POSTED its
-   review and have zero unresolved threads.
-6. Set the board Status via gh project item-edit using the PROFILE.md ids:
-   findings → Reviewed; clean AND Codex resolved → Awaiting Validation; Codex
-   not yet posted/resolved → leave at Awaiting Review and say so in your PR
-   comment. If the board write fails, report that in the PR comment instead of
-   failing silently.
+5. Codex is optional, never a gate (CONVENTIONS.md §8): if the profile's
+   <codex-reviewer> has ALREADY posted a review carrying unresolved actionable
+   ([change-requested]) threads, note them in your PR comment so gh-fixer picks
+   them up — but NEVER wait for Codex to post or resolve. A pending, absent, or
+   never-posted Codex review does not hold this stage.
+6. Set the board Status via gh project item-edit using the PROFILE.md ids: your
+   OWN review findings raised → Reviewed; your OWN review findings clean or
+   addressed → Awaiting Validation — independent of Codex. Do NOT leave the PR at
+   Awaiting Review waiting on Codex to post or resolve. If the board write fails,
+   report that in the PR comment instead of failing silently.

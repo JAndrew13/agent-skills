@@ -20,7 +20,7 @@ to create it — never guess instance values.
 |---|---|
 | `<repo>` | `**FILL-ME**` |
 | `<automation-login>` | **FILL-ME** — the one shared GitHub login every lead/worker/sweeper session authenticates as (why ownership is session-token-based; CONVENTIONS.md §7/§12) |
-| `<codex-reviewer>` | **FILL-ME** — the async automated PR reviewer the §8 gate waits on |
+| `<codex-reviewer>` | **FILL-ME** — the async automated PR reviewer; addressed if it posts, but **NOT a required gate** (de-gated 2026-07-15, CONVENTIONS.md §8). All review-gate requirements are on the Claude review routine; this value only lets a skill RECOGNIZE a Codex review so its findings can be addressed when present. |
 
 ## Board (Projects v2)
 

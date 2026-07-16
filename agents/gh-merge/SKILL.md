@@ -1,6 +1,6 @@
 ---
 name: gh-merge
-description: Merge Validated pull requests to main — the pipeline's single, tightly-guarded merger. Plans a collision-aware merge order across all open Validated PRs, re-checks the Codex gate at merge time, runs the full-suite gate per the testing-cadence policy, squash-merges to main, applies the version bump, reconciles the parent epic (and triggers its integration-acceptance pass when the last child lands), closes the ticket, sets the board Status, and invokes gh-clean. Use when a Validated PR is ready to land, or when gh-lead / the sweeper delegates a merge. This is the ONLY role that merges.
+description: Merge Validated pull requests to main — the pipeline's single, tightly-guarded merger. Plans a collision-aware merge order across all open Validated PRs, re-confirms the review gate and CI at merge time (the Claude review+validation stages are the gate; Codex is addressed if present but never required), runs the full-suite gate per the testing-cadence policy, squash-merges to main, applies the version bump, reconciles the parent epic (and triggers its integration-acceptance pass when the last child lands), closes the ticket, sets the board Status, and invokes gh-clean. Use when a Validated PR is ready to land, or when gh-lead / the sweeper delegates a merge. This is the ONLY role that merges.
 ---
 
 # GH Merge
@@ -18,8 +18,9 @@ ranges; open any other section only at the moment a step cites it.
 ## Overview
 
 You are the pipeline's **sole merger**. A PR reaches you at board Status **`Validated`**
-(review clean, Codex resolved, CI green, behavior verified by gh-validate). Your job is the
-`(Validated) → gh-merge → [closed]` transition of the state machine: plan a safe merge
+(review-stage findings clean/addressed, CI green, behavior verified by gh-validate — the
+Claude review+validation stages are the review gate; Codex is not required, §8). Your job is
+the `(Validated) → gh-merge → [closed]` transition of the state machine: plan a safe merge
 order, re-check the gates *at merge time*, squash to `main`, bump the version, reconcile the
 epic, close the ticket, set its board Status, and clean up.
 
@@ -51,13 +52,15 @@ restating its marker, fields, discovery rules, or writer policy here.
   worktree off the **latest** `origin/main` immediately before you start (see *Prepare*).
   Never `git switch` / edit / `git clean` in the operator's main checkout or any other
   session's worktree — that has corrupted refs and wiped `.env` before.
-- **Gate on the real state, at merge time — never a proxy.** Codex threads and CI post
-  asynchronously; a status that was green at review time can be stale now. Re-query the live
-  PR state right before the merge button.
-- **Prefer surfacing a stuck gate to the operator over merging on a proxy.** If Codex never
-  posts, a thread can't be resolved, CI is stuck, or a D7 gate is unsigned — **stop and
-  surface it to the operator.** Do not merge to keep the pipeline moving. "A Codex review
-  exists" is not "Codex resolved"; "CI was green earlier" is not "CI is green now."
+- **Gate on the real state, at merge time — never a proxy.** CI posts asynchronously; a
+  status that was green at review time can be stale now. Re-query the live PR state right
+  before the merge button. (Codex is **not** a merge gate — CONVENTIONS.md §8; a missing,
+  pending, or unresolved Codex review never blocks the merge.)
+- **Prefer surfacing a stuck gate to the operator over merging on a proxy.** If CI is stuck,
+  or a D7 gate is unsigned — **stop and surface it to the operator.** Do not merge to keep
+  the pipeline moving. "CI was green earlier" is not "CI is green now." A pending or absent
+  Codex review is **not** a stuck gate — it is expected under the de-gating; proceed without
+  it (§8).
 - **You are the only version-bumper.** Workers leave the profile's `<version-file>` version
   untouched; you apply the bump serially at each merge (CONVENTIONS.md §9).
 - **Single merge/version pen when two sessions run.** If a second gh-lead/merge session is
@@ -178,25 +181,33 @@ PR still valid after the ones before it land.
    ```
 
    Resolve conflicts, re-run its **targeted** tests (CONVENTIONS.md §9 — targeted during dev,
-   not a full suite per PR), and re-confirm its Codex/CI state (Step 3) before it becomes the
-   next merge. If a rebase materially changes the diff, the PR may need to re-enter validation
-   (kick back to `Reviewed` per the state machine) rather than merge on stale approval.
+   not a full suite per PR), and re-confirm its review-gate + CI state (Step 3) before it
+   becomes the next merge. If a rebase materially changes the diff, the PR may need to re-enter
+   validation (kick back to `Reviewed` per the state machine) rather than merge on stale approval.
 
-## Step 3 — Re-check the Codex gate at merge time (D5)
+## Step 3 — Confirm the review gate at merge time (D5)
 
-Apply the **Codex pre-merge gate exactly as defined in CONVENTIONS.md §8** — do not restate
-it here. Re-run the check **now**, against the live PR, because Codex reviews and threads post
-**asynchronously** and may have appeared or changed since gh-review ran:
+The required review gate is the **Claude review+validation stages**, not Codex
+(CONVENTIONS.md §8, the 2026-07-15 de-gating) — do not restate §8 here. The merge
+review-gate precondition is simply: **the PR reached `Validated` via those stages.**
 
-- Confirm Codex has **posted** its automated review (a still-pending review blocks merge just
-  as an unresolved thread does), and that **zero** Codex review threads remain unresolved
-  (query the PR's review threads via `gh` / the GitHub tools).
-- If a Codex comment was deferred rather than fixed, confirm a **tracked follow-up issue**
-  exists and was called out loudly (no silent scope reduction) — per §8; else stop.
-- **Stuck-gate rule:** if Codex never posts, or a thread genuinely cannot be resolved, **do
-  not merge** — surface it to the operator. Merging on "a review exists" is the proxy §8
-  forbids. (The 422 self-review workaround for own-account PRs is in §8 — COMMENT-type reviews
-  tagged `[change-requested]`/`[minor]`.)
+- **Confirm the PR is genuinely `Validated`.** gh-review's own findings are clean/addressed
+  and gh-validate's behavioral pass succeeded. Re-confirm the board Status is still
+  `Validated` and that no **new** required-change (`[change-requested]` / BLOCKING) finding
+  was posted after it — a new one kicks the PR back to `Reviewed` (Step 2.4), not merge. This
+  is the gate, and it is **independent of Codex**.
+- **Do NOT re-check or wait on Codex as a gate.** A Codex review that is **pending, absent, or
+  never posted must NOT block the merge** (§8) — do not treat "zero unresolved Codex threads"
+  as a merge precondition, and do not surface a missing or pending Codex review as a stuck
+  gate.
+- **Address a present Codex review if it has actionable findings — not required, never
+  blocking.** If a Codex review **has** posted `[change-requested]` threads that were never
+  worked, treat them as ordinary review findings and route them through the `gh-fixer` loop
+  before landing (kick back to `Reviewed`), with any deliberate deferral carrying a **tracked
+  follow-up issue** called out loudly (§8; no silent scope reduction). Their presence or
+  absence is **not** the merge gate.
+- (The 422 self-review workaround for own-account PRs is in §8 — the Claude review routine
+  posts COMMENT-type reviews tagged `[change-requested]`/`[minor]`.)
 
 ## Step 4 — D7 human gate for high-risk surfaces (before merge)
 
@@ -239,8 +250,8 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    tests). In a multi-PR wave of standalones, run it before **each** merge-to-`main` — do not
    rely on one end-of-wave run — or compose the wave on a shared integration branch and run it
    once before that branch merges to `main`.
-3. **Squash-merge to the target branch** once the order (Step 2), Codex (Step 3), D7 (Step 4),
-   and the suite **on the merged tree** are all satisfied:
+3. **Squash-merge to the target branch** once the order (Step 2), the review gate (Step 3),
+   D7 (Step 4), and the suite **on the merged tree** are all satisfied:
 
    ```sh
    gh pr merge <pr> --squash --delete-branch
@@ -372,20 +383,22 @@ When a **child** PR lands on its epic branch:
 
 - **One merge policy, one merger.** gh-lead and the sweeper delegate here; there is no second
   merge path. If you ever find merge logic inlined elsewhere, route it through this skill.
-- **Live state over cached state.** Re-query Codex threads, CI, and the board Status at merge
-  time — asynchronous posts make review-time snapshots stale.
-- **Surface, don't override.** A stuck Codex gate, an unsigned D7 surface, an `Unsafe!` label,
-  or a rebase that invalidates a validation — stop and surface to the operator. Never merge to
-  keep momentum.
+- **Live state over cached state.** Re-query CI and the board Status at merge time —
+  asynchronous posts make review-time snapshots stale. (Codex is not a merge gate, §8; do not
+  gate the merge on its thread state.)
+- **Surface, don't override.** An unsigned D7 surface, an `Unsafe!` label, or a rebase that
+  invalidates a validation — stop and surface to the operator. Never merge to keep momentum. A
+  pending or absent Codex review is expected under the de-gating, **not** a stuck gate (§8).
 - **Isolation.** All git ops run in your dedicated merge worktree; nothing touches the
   operator's main or another session's worktree. gh-clean tears it down.
-- **No silent scope reduction.** Any deferral (a Codex comment, a follow-up, a partial
-  integration) is a tracked issue, called out loudly — never resolve-and-ignore.
+- **No silent scope reduction.** Any deferral (a review-stage finding, a Codex comment when
+  present, a follow-up, a partial integration) is a tracked issue, called out loudly — never
+  resolve-and-ignore.
 
 ## Worked example — DRY RUN on a two-PR fixture (no execution)
 
-**Purpose:** demonstrate the merge-order/collision plan, the Codex re-check, and the D7 gate
-producing an *exact command list* **without executing** anything. This is a hand-run of the
+**Purpose:** demonstrate the merge-order/collision plan, the review-gate confirmation (Codex
+is not a gate), and the D7 gate producing an *exact command list* **without executing** anything. This is a hand-run of the
 F09 acceptance fixture: two open **`Validated`** standalone PRs whose diffs overlap on one
 file. A dry run **plans and prints** — it never calls `gh pr merge`. (The fixture file paths
 and gate commands below are THIS project's PROFILE.md instance values; substitute your
@@ -393,10 +406,10 @@ profile's.)
 
 **Fixture (both at board Status `Validated`, both target `main`):**
 
-| PR | Issue | `gh pr diff --name-only` | Codex | Touches live-order/`.env`/track-5? |
+| PR | Issue | `gh pr diff --name-only` | Review gate | Touches live-order/`.env`/track-5? |
 |---|---|---|---|---|
-| #901 | #801 `[TASK] CONFIG - add vol-floor entry gate` | `src/server/config_loader.py`, `tests/data/config_loader_snapshot.json`, `tests/test_config_fields.py`, `pyproject.toml`(version untouched) | posted, **0 unresolved** | no |
-| #902 | #802 `[TASK] CONFIG - widen vol-floor validation` | `src/server/config_loader.py`, `tests/test_config_validation.py`, `pyproject.toml`(version untouched) | posted, **0 unresolved** | no |
+| #901 | #801 `[TASK] CONFIG - add vol-floor entry gate` | `src/server/config_loader.py`, `tests/data/config_loader_snapshot.json`, `tests/test_config_fields.py`, `pyproject.toml`(version untouched) | **Validated** via Claude review+validate; **no Codex posted** (not required) | no |
+| #902 | #802 `[TASK] CONFIG - widen vol-floor validation` | `src/server/config_loader.py`, `tests/test_config_validation.py`, `pyproject.toml`(version untouched) | **Validated** via Claude review+validate; **no Codex posted** (not required) | no |
 
 **Collision analysis (Step 2):** the diff file-sets intersect on
 `src/server/config_loader.py` → **real overlap → serialize** (never merge #902 straight after
@@ -424,10 +437,12 @@ gh pr diff 901 --name-only     # -> includes src/server/config_loader.py
 gh pr diff 902 --name-only     # -> includes src/server/config_loader.py  => OVERLAP => serialize
 
 # ============ PR #901 (first: smaller blast, owns the snapshot) ============
-# Step 3 re-check Codex at merge time (CONVENTIONS.md §8):
-gh pr view 901 --json reviews,reviewDecision
-gh api graphql -f query='{ repository(owner:"<repo-owner>",name:"<repo-name>"){ pullRequest(number:901){ reviewThreads(first:100){ nodes{ isResolved } } } } }'
-#   require: Codex review posted AND every thread isResolved==true ; else STOP + surface
+# Step 3 confirm the review gate at merge time (CONVENTIONS.md §8): the PR reached Validated
+#   via the Claude review+validation stages — THAT is the gate, independent of Codex:
+gh pr view 901 --json reviewDecision,statusCheckRollup   # still Validated (Claude stages) + CI green
+#   Codex is NOT re-checked as a gate: a missing/pending/unresolved Codex review does NOT block.
+#   (ONLY if a Codex review already posted actionable [change-requested] threads, route them
+#    through gh-fixer first — never merge over an unaddressed required finding; else proceed.)
 # Step 4 D7 (CONVENTIONS.md §7d): #901 touches no live-order/.env/track-5 surface -> no human gate
 # Step 5.0 materialize the MERGED tree in the worktree (gate the code, NOT clean main):
 gh pr checkout 901 && git rebase origin/main        # tree under test == what the squash ships
@@ -454,9 +469,9 @@ git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py 
 #   resolve conflicts; re-run TARGETED tests only (not full suite yet):
 #   pytest -q tests/test_config_validation.py
 #   if the rebase materially changed #902's diff -> kick back to Reviewed (do NOT merge stale)
-# Step 3 re-check Codex again (threads post async; re-query AFTER the rebase push):
-gh pr view 902 --json reviews,reviewDecision
-gh api graphql -f query='{ repository(owner:"<repo-owner>",name:"<repo-name>"){ pullRequest(number:902){ reviewThreads(first:100){ nodes{ isResolved } } } } }'
+# Step 3 confirm the review gate again after the rebase (still Validated + CI green; Codex is
+#   NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
+gh pr view 902 --json reviewDecision,statusCheckRollup
 # Step 4 D7: #902 touches no high-risk surface -> no human gate
 # Step 5.0/5.1/5.2 the rebase above already put the MERGED tree in the worktree; gate it (not clean main):
 <fast-gates>                                        # the profile's fast-gate commands
@@ -476,9 +491,10 @@ gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board
 
 **Dry-run verdict (what it prints, having executed nothing):** order = **#901 then #902**;
 reason = real `config_loader.py` overlap + dual snapshot regeneration force serialize, #901
-first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both pass the
-Codex re-check with zero unresolved threads and neither trips the D7 surface gate; two
-`main`-boundary full-suite runs (one per merge, not one shared); two **serial** patch bumps.
+first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both are
+confirmed still `Validated` via the Claude review+validation stages (no Codex posted, and none
+required — §8) and neither trips the D7 surface gate; two `main`-boundary full-suite runs (one
+per merge, not one shared); two **serial** patch bumps.
 No `gh pr merge` (or any mutating command) is executed in a dry run — it stops here with the
 plan above for the operator to approve.
 
@@ -512,7 +528,7 @@ gh api repos/<repo>/issues/<sprint-control#>/comments --jq '<select §11 marker>
 ```
 
 **What did NOT run:** no *Prepare* worktree (`git worktree add` never issued), no Step 1
-board read, no Step 2 collision plan, no Step 3 Codex re-check, no Step 5 fast gates /
+board read, no Step 2 collision plan, no Step 3 review-gate confirmation, no Step 5 fast gates /
 `pytest`, no Step 6 version bump — the sequence never reaches them. That is the coordination
 lock working: a second same-login session cannot race the `<version-file>` version line. The
 non-owner does **not** self-appoint; ownership changes only via the operator or the §12
@@ -527,9 +543,9 @@ transfer protocol.
 git -C <operator-main-repo> fetch origin
 git -C <operator-main-repo> worktree add --detach <merge-worktree> origin/main
 cd <merge-worktree> && git checkout -b gh-merge-sess-A-0001
-#   ... then Step 1..8 exactly as the DRY RUN example above (collision plan, Codex re-check,
-#   D7, full-suite gate on the merged tree, squash-merge, serial version bump, epic
-#   reconcile, close + checkpoint cleanup) ...
+#   ... then Step 1..8 exactly as the DRY RUN example above (collision plan, review-gate
+#   confirmation, D7, full-suite gate on the merged tree, squash-merge, serial version bump,
+#   epic reconcile, close + checkpoint cleanup) ...
 ```
 
 **Verdict:** ownership is the **first** gate, before any worktree exists. A non-owner halts

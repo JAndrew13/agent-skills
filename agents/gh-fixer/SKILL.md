@@ -24,7 +24,8 @@ A PR reaches you at board Status **`Reviewed`**: `gh-review` (or a
 is to work **every** outstanding finding — across **both** channels findings
 arrive on (inline diff **review threads** *and* top-level **COMMENT-review /
 issue-comment bodies** tagged `[change-requested]`/`[minor]` under the 422
-workaround), from `gh-review` and **Codex's automated review** alike — to a
+workaround), from `gh-review` and, **when it has posted one**, Codex's automated
+review (de-gated but addressed-if-present, CONVENTIONS.md §8) — to a
 coherent close: fix each with the smallest change that resolves it, reply
 describing the fix, and dispose it (resolve the thread, or note the
 COMMENT-review finding — the latter has no resolvable state), then push. When
@@ -36,7 +37,7 @@ by setting Status to `Awaiting Review`.
 **DW-10** (the gh-resolve refactor into the pure Worker) can delete that
 inlined prose from gh-resolve in the same phase — the logic lives here once.
 
-**Taxonomy, statuses, the state machine, the Codex gate, and the
+**Taxonomy, statuses, the state machine, the review gate, and the
 testing-cadence policy are owned by
 [`agents/gh-workflow/CONVENTIONS.md`](../../agents/gh-workflow/CONVENTIONS.md).** This
 skill **references** those sections and **never restates** their tables.
@@ -67,10 +68,10 @@ prevent.
   arrive two structurally different ways, and a fixer that walks only one
   silently hands the PR back with the other's required changes unaddressed:
   - **(A) Diff review threads** — inline `PullRequestReviewThread`s anchored to
-    a `file:line`, from `gh-review`'s inline comments and **every comment from
-    Codex's automated review** (`chatgpt-codex-connector`). These carry an
-    `isResolved` flag and are the *only* channel `resolveReviewThread` can
-    close. Query their state via the GitHub tools or
+    a `file:line`, from `gh-review`'s inline comments and, **when Codex has
+    posted a review, every comment from it** (`chatgpt-codex-connector`). These
+    carry an `isResolved` flag and are the *only* channel `resolveReviewThread`
+    can close. Query their state via the GitHub tools or
     `gh api graphql` (`reviewThreads { nodes { isResolved } }`); a comment
     existing is not evidence its thread is still open — check `isResolved`.
   - **(B) Top-level COMMENT-review bodies + PR issue-comments** — under the 422
@@ -177,7 +178,7 @@ allows — you may not simply resolve-and-ignore it:
   never post a findings verdict, and never decide `Reviewed` vs.
   `Awaiting Validation` — that is `gh-review`'s job, already done before you
   were invoked.
-- **Never merges.** Only `gh-merge` merges; the Codex gate and full-suite
+- **Never merges.** Only `gh-merge` merges; the review gate and full-suite
   gate are re-checked there (CONVENTIONS.md §8, §9).
 - **One PR per invocation.** Re-invoke for the next PR.
 - **Both channels, every time.** Cover diff review threads AND top-level

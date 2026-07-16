@@ -57,7 +57,7 @@ stage instead of prose buried in a monolith:
 
 ## The single source of truth: CONVENTIONS.md
 
-**All** taxonomy, statuses, the state machine, human gates, the Codex gate, and
+**All** taxonomy, statuses, the state machine, human gates, the review gate, and
 the version/testing cadence live in **`agents/gh-workflow/CONVENTIONS.md`** — the
 one canonical home (the CLAUDE.md reuse ethos applied to process docs). This skill
 **references** those sections and never restates their tables. If you find
@@ -69,7 +69,7 @@ Sections you rely on here:
 
 - **§1** title tags · **§2** kind/category labels · **§3** the project board
   (mechanics + canonical IDs) · **§4** state machine · **§5** status-ownership ·
-  **§6** the `## Refinement` block (D4) · **§7** human gates (D7) · **§8** Codex
+  **§6** the `## Refinement` block (D4) · **§7** human gates (D7) · **§8** review
   gate (only referenced when writing AC) · **§10** decision record.
 
 **Status is board-owned, never a label.** (CONVENTIONS.md §3, the D1 veto.) You

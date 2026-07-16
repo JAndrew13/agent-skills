@@ -20,9 +20,11 @@ they can be installed at the Claude application level and drive any repository.
 
 **[agents/gh-workflow/CONVENTIONS.md](agents/gh-workflow/CONVENTIONS.md)** is the
 single source for the taxonomy, board Status model, state machine, human gates,
-Codex gate, and version/testing-cadence policy. Skills reference its sections and
-never restate them; each skill's **Conventions scope** line declares exactly
-which §§ it loads (nothing loads the whole doc except gh-lead).
+review gate (Codex-independent — the Claude review stage is the required gate; Codex
+is addressed if present but never required), and version/testing-cadence policy.
+Skills reference its sections and never restate them; each skill's **Conventions
+scope** line declares exactly which §§ it loads (nothing loads the whole doc except
+gh-lead).
 
 ## The profile contract (per-project instance data)
 

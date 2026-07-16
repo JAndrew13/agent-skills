@@ -1,6 +1,6 @@
 ---
 name: gh-review
-description: Adversarially review exactly one GitHub pull request and report findings — advisory only. Use when a PR in the dev-workflow pipeline is at status Awaiting Review and needs its review stage: run the adversarial passes, invoke reuse-review on any /src diff, wait for Codex, post every finding as a PR comment (never chat-only), and move the board Status to Reviewed (findings) or Awaiting Validation (clean + Codex resolved). Never pushes fixes and never merges.
+description: Adversarially review exactly one GitHub pull request and report findings — advisory only. Use when a PR in the dev-workflow pipeline is at status Awaiting Review and needs its review stage: run the adversarial passes, invoke reuse-review on any /src diff, post every finding as a PR comment (never chat-only), and move the board Status to Reviewed (findings) or Awaiting Validation (this stage's own findings clean/addressed, independent of Codex). Never pushes fixes and never merges.
 ---
 
 # GH Review
@@ -26,20 +26,21 @@ Review **exactly one PR** per invocation, as the pipeline's standalone review
 stage: `(Awaiting Review) → gh-review → (Reviewed) | (Awaiting Validation)`.
 
 The job is **adversarial and advisory**. You try to make each acceptance
-criterion FALSE, report what you find as PR comments, wait for Codex, and set the
-board Status. You **do not** push fixes — that is `gh-fixer`'s job — and you
-**never merge** — only `gh-merge` merges.
+criterion FALSE, report what you find as PR comments, and set the board Status on
+**your own findings** — the required gate is this stage's own review, independent
+of Codex (CONVENTIONS.md §8). You **do not** push fixes — that is `gh-fixer`'s job
+— and you **never merge** — only `gh-merge` merges.
 
 This skill is an extraction of two existing sources, named here so the later
 refactors (DW-10/DW-11) can delete the duplicated prose from the monolith:
 
 - **`agents/gh-lead/SKILL.md` Phase 4 ("Review mode")** — the adversarial-posture
   framing, the advisory/comments-on-PR rule, the five review lenses, and the
-  wait-for-Codex requirement.
+  Codex handling (now de-gated — addressed if present, never a required gate; §8).
 - **`agents/gh-resolve/SKILL.md` step 5 (the four adversarial review passes)** —
   the Architecture / Bug / Test / Wiring-&-honesty pass definitions.
 
-**Taxonomy, statuses, the state machine, the Codex gate, the 422 workaround, and
+**Taxonomy, statuses, the state machine, the review gate, the 422 workaround, and
 the testing-cadence policy are owned by
 [`agents/gh-workflow/CONVENTIONS.md`](../../agents/gh-workflow/CONVENTIONS.md).** This skill
 **references** those sections and **never restates** their tables. Re-inlining any
@@ -119,20 +120,25 @@ gh-resolve's four passes). Each is a place to try to break the change:
   deselect, grandfather, partial migration) is stated **loudly** in code and has a
   tracked follow-up issue — never silently presented as done.
 
-### 4. Wait for Codex (the D5 hard gate)
+### 4. Codex is optional — recognize it, address it if present, never gate on it
 
-Codex (`chatgpt-codex-connector`) posts its automated review **asynchronously**,
-often **after** this pass runs. Do **not** advance the ticket to
-`Awaiting Validation` until **both**: (a) Codex has **posted** its review, and
-(b) **every** Codex review thread is **resolved or explicitly dispositioned**.
+The required review gate is **this stage's own findings** (step 3), not Codex —
+CONVENTIONS.md §8, the 2026-07-15 de-gating ("full Claude"). Codex
+(`chatgpt-codex-connector`) posts its automated review **asynchronously**, often
+**after** this pass runs, or not at all — and that **never** holds the ticket.
 
-- Follow **CONVENTIONS.md §8** for the exact gate and how to confirm zero
-  unresolved threads — do not restate it here.
-- "A Codex review exists" is **not** "Codex resolved." A still-pending Codex review
-  blocks the clean-PR transition exactly as an unresolved thread does.
+- **Never wait for Codex.** A Codex review that is **pending, absent, or never
+  posted must NEVER** block the `Awaiting Review → Awaiting Validation` transition.
+  Do **not** leave the PR at `Awaiting Review` because Codex has not posted or its
+  threads are unresolved — that is the old required-gate behavior the de-gating
+  reversed. Follow **CONVENTIONS.md §8**; do not restate it here.
+- **Recognize Codex so it can be addressed.** If a Codex review by the profile's
+  `<codex-reviewer>` **has already posted** actionable (`[change-requested]`)
+  comments, note them in your PR comment so they enter the `gh-fixer` loop like any
+  other finding — recognition serves **addressing**, not gating.
 - gh-review is **advisory** — it does not itself resolve Codex threads or push the
-  fixes; addressing them is `gh-fixer`'s stage. gh-review only *checks the gate* to
-  decide the status transition in step 5.
+  fixes; addressing them (when present) is `gh-fixer`'s stage. gh-review decides the
+  step-5 status transition **on its own findings alone**.
 
 ### 5. Post findings and set the board Status
 
@@ -150,27 +156,28 @@ Then move the board Status via `gh project item-edit` (never a label — mechani
 and IDs in CONVENTIONS.md §3; ownership in §5):
 
 - **Findings raised → `Reviewed`.** Any `[change-requested]` finding, or any
-  BLOCKING reuse-review result, means the PR needs the fixer loop. Set Status
+  BLOCKING reuse-review result — **this stage's own, or an already-posted Codex
+  `[change-requested]` thread** — means the PR needs the fixer loop. Set Status
   `Reviewed`; `gh-fixer` picks it up.
-- **No findings AND Codex resolved → `Awaiting Validation`.** Only when there are
-  no required-change findings **and** the step-4 Codex gate is satisfied (posted +
-  all threads resolved/dispositioned). If Codex has not posted or a thread is open,
-  the PR is **not** ready for `Awaiting Validation` — leave it at `Awaiting Review`
-  and surface that Codex is still pending; do not set `Reviewed` merely to move it
-  (there is nothing for the fixer to fix), and do not gate on a proxy.
+- **Own findings clean/addressed → `Awaiting Validation`.** When there are no
+  outstanding required-change findings from **this review stage** (adversarial
+  passes + reuse-review), advance the PR — **independent of Codex** (CONVENTIONS.md
+  §8). A pending, absent, or never-posted Codex review does **not** hold this
+  transition: do **not** leave the PR at `Awaiting Review` waiting on Codex, and do
+  **not** set `Reviewed` merely to park it (there is nothing for the fixer to fix).
 
 `[minor]`-only nits do not by themselves force `Reviewed` — use judgment: if the
-change is otherwise clean and Codex is resolved, they can ride as non-blocking
-comments while the Status advances to `Awaiting Validation`. When in doubt, prefer
-`Reviewed` (the adversarial default).
+change is otherwise clean, they can ride as non-blocking comments while the Status
+advances to `Awaiting Validation`. When in doubt, prefer `Reviewed` (the
+adversarial default).
 
 ## Boundaries
 
 - **Advisory only.** Never edit code, never push commits, never resolve another
   actor's review threads to make the gate pass. Hand every fix back via PR comments
   for `gh-fixer`.
-- **Never merges.** Only `gh-merge` merges; the Codex gate and full-suite gate are
-  re-checked there (CONVENTIONS.md §8, §9).
+- **Never merges.** Only `gh-merge` merges; the review gate and full-suite gate are
+  re-checked there (CONVENTIONS.md §8, §9). Codex is not a merge gate (§8).
 - **One PR per invocation.** Re-invoke for the next PR.
 - **Read-only git.** Inspect via `gh pr diff`, `git show`, and reading files — no
   branch switches in a shared worktree.
