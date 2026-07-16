@@ -1,6 +1,6 @@
 ---
 name: gh-validate
-description: Behaviorally validate exactly one GitHub pull request before merge — pull its branch into an isolated worktree, run the ticket's acceptance criteria as literal behavior through the real entry point (not by reading the diff), post a pass/fail verdict comment, and set the board Status. Use when a PR in the dev-workflow pipeline is at status Awaiting Validation (review clean, Codex resolved, CI green) and needs its pre-merge validation stage. Verifies the feature works through the real path — never strategy profitability. Never fixes, never merges.
+description: Behaviorally validate exactly one GitHub pull request before merge — pull its branch into an isolated worktree, run the ticket's acceptance criteria as literal behavior through the real entry point (not by reading the diff), post a pass/fail verdict comment, and set the board Status. Use when a PR in the dev-workflow pipeline is at status Awaiting Validation (review findings clean/addressed, CI green — Codex not required) and needs its pre-merge validation stage. Verifies the feature works through the real path — never strategy profitability. Never fixes, never merges.
 ---
 
 # GH Validate
@@ -33,7 +33,7 @@ patterns (surface identification, drive-it, push-on-it, capture, verdict
 format) — adapted here to a fixed pipeline contract (worktree, PYTHONPATH,
 verdict-comment format, board Status) rather than `verify`'s free-form report.
 
-**Taxonomy, statuses, the state machine, the Codex gate, and the
+**Taxonomy, statuses, the state machine, the review gate, and the
 version/cadence policy are owned by
 [`agents/gh-workflow/CONVENTIONS.md`](../../agents/gh-workflow/CONVENTIONS.md).** This
 skill **references** those sections and **never restates** their tables.
@@ -41,7 +41,7 @@ skill **references** those sections and **never restates** their tables.
 ## Scope (single-purpose)
 
 - Input: one PR (number or URL) whose board Status is `Awaiting Validation`
-  (CI green, review clean, Codex resolved — CONVENTIONS.md §4).
+  (CI green, review findings clean/addressed — Codex not required, CONVENTIONS.md §4).
 - If asked to validate several PRs, run this skill once per PR — do not batch.
 - Read the linked **issue** end to end: its acceptance criteria, its
   `## Refinement` block, and its Validation section (if it has one) before

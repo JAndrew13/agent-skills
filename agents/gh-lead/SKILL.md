@@ -40,7 +40,7 @@ home, and the lead **references** it:
   **Fix review threads** → dispatch **`gh-fixer`** · **Validate** → dispatch
   **`gh-validate`** · **Merge** → dispatch **`gh-merge`** (the **only** merger) ·
   **Clean up** → dispatch **`gh-clean`** (gh-merge already invokes it at its Step 8).
-- **Taxonomy, statuses, the state machine, human gates, the Codex gate, and the
+- **Taxonomy, statuses, the state machine, human gates, the review gate, and the
   version/testing-cadence policy** are owned by
   [`CONVENTIONS.md`](../../agents/gh-workflow/CONVENTIONS.md) — the one canonical
   home (the CLAUDE.md reuse ethos applied to process docs). This skill references
@@ -337,18 +337,20 @@ dispatcher resolves the board map once (Phase 1); the children reuse it — neve
 per-stage full-board read.
 
 1. **Review → dispatch `gh-review`.** It runs the adversarial passes, invokes
-   `reuse-review` on any `/src` diff, **waits for Codex** (the §8 hard gate), posts
-   every finding as a PR comment, and sets Status **`Reviewed`** (findings) or
-   **`Awaiting Validation`** (clean + Codex resolved). Review is advisory — it
-   never merges.
+   `reuse-review` on any `/src` diff, posts every finding as a PR comment, and sets
+   Status **`Reviewed`** (findings) or **`Awaiting Validation`** (its own findings
+   clean/addressed — **independent of Codex**, the §8 review gate). Codex is
+   addressed if it posts but is never waited on. Review is advisory — it never merges.
 2. **Fix → dispatch `gh-fixer`** whenever a PR is at `Reviewed`. It addresses every
    unresolved review thread **and** every `[change-requested]` COMMENT-review
-   finding (from `gh-review` **and** Codex), one at a time, replies in-thread,
-   files a tracked follow-up for any deliberate deferral, pushes, and sets Status
-   back to **`Awaiting Review`**. Loop `gh-review` ↔ `gh-fixer` until there are no
-   findings left in either channel and the Codex gate (§8) is satisfied.
+   finding (from `gh-review` **and**, when present, Codex), one at a time, replies
+   in-thread, files a tracked follow-up for any deliberate deferral, pushes, and
+   sets Status back to **`Awaiting Review`**. Loop `gh-review` ↔ `gh-fixer` until
+   there are no findings left in either channel — the review gate is the Claude
+   stage's own findings, not Codex (§8).
 3. **Validate → dispatch `gh-validate`** when a PR reaches `Awaiting Validation`
-   (CI green, review clean, Codex resolved). It checks the branch out into an
+   (CI green, review findings clean/addressed — Codex not required, §8). It checks
+   the branch out into an
    isolated worktree and **runs the ticket's acceptance criteria as literal
    behavior** through the real CLI/MCP/UI surface, posts a PASS/FAIL verdict
    comment, and sets Status **`Validated`** (pass) or kicks back to **`Reviewed`**
@@ -360,8 +362,9 @@ active §11 writer checkpoints the durable evidence and next safe action before
 dispatching another stage.
 The lead's job across Phase 4 is scheduling and gate-watching: dispatch the right
 stage skill for each PR's current Status, keep the loop moving, and **surface any
-owed human gate** (CONVENTIONS.md §7) or stuck Codex gate (§8) to the operator
-rather than pushing past it.
+owed human gate** (CONVENTIONS.md §7) to the operator rather than pushing past it.
+Codex is **not** a gate — a pending or absent Codex review never stuck-blocks the
+loop (§8); do not hold a PR waiting on it.
 
 ## Phase 5 — Merge (dispatch gh-merge — the only merger)
 
@@ -371,8 +374,10 @@ tightly-guarded merger**. The lead never merges inline. `gh-merge` owns the enti
 
 - plans a **collision-aware merge order** across all open `Validated` PRs (actual
   diff file-sets, hot-file serialize rules, rebase-and-re-verify);
-- **re-checks the Codex gate at merge time** (CONVENTIONS.md §8) and the **D7
-  high-risk-surface human gate** (§7d — live-order / `.env` / track-5);
+- **re-confirms the review gate at merge time** (CONVENTIONS.md §8 — the PR reached
+  `Validated` via the Claude review+validation stages; Codex is addressed if present
+  but never required) and the **D7 high-risk-surface human gate** (§7d — live-order /
+  `.env` / track-5);
 - runs the **full `pytest -q` suite once per merge-to-`main` boundary** on the
   actual merged tree, plus the fast gates (CONVENTIONS.md §9);
 - **squash-merges** (standalones/epics to `main`, children to the epic branch);
@@ -418,7 +423,7 @@ hand back up:
   work, dispatch the skill instead.
 - **Reference, don't restate.** All taxonomy / status / gate / cadence tables live
   in CONVENTIONS.md; this skill links them (§2 labels, §3 board, §4 state machine,
-  §5 ownership, §6 refinement block, §7 human gates + runaway guards, §8 Codex
+  §5 ownership, §6 refinement block, §7 human gates + runaway guards, §8 review
   gate, §9 version/testing cadence). Re-inlining any of them is the duplication
   debt DW-11 removed.
 - **Status is board-owned.** Read status with `gh project item-list` and set it
@@ -426,9 +431,10 @@ hand back up:
   label (D1 veto).
 - **Isolation.** Every dispatched worker/reviewer/validator/merger runs in its own
   worktree; nothing touches the operator's main worktree's branch state.
-- **Only gh-merge merges**, and it gates on the **live** state (Codex threads, CI,
-  D7 sign-offs) at merge time — the lead surfaces a stuck gate to the operator
-  rather than pushing past it.
+- **Only gh-merge merges**, and it gates on the **live** state (CI, D7 sign-offs,
+  and the review gate — the PR reached `Validated`) at merge time — the lead
+  surfaces a stuck gate to the operator rather than pushing past it. Codex is not a
+  merge gate (§8).
 - **Surface, don't override.** For anything `Unsafe!`/`Ignore!`/`Concept Idea`, any
   owed human gate (§7), or any decision that is genuinely the operator's, **stop and
   surface** rather than acting. An agent-settable boolean is not a gate (FABLE_06).

@@ -23,8 +23,8 @@ The job is **build, then hand off**. You take one refined ticket, implement it i
 your own isolated worktree, run the repo gates, do a **light** self-check, open a
 PR, and move the board Status to `Awaiting Review`. You do **not** perform the
 deep adversarial review passes — that is `gh-review`'s stage — you do **not**
-address review threads (from `gh-review` or Codex) — that is `gh-fixer`'s stage —
-and you **never merge** — only `gh-merge` merges.
+address review threads (from `gh-review`, or Codex when it posts one) — that is
+`gh-fixer`'s stage — and you **never merge** — only `gh-merge` merges.
 
 This is a deliberately narrow contract: **one refined ticket in → one PR out.**
 Two big sections that used to live here have moved to their single canonical homes
@@ -37,7 +37,7 @@ so the prose is not duplicated:
   **`agents/gh-fixer/SKILL.md`** — gh-resolve does not reply to or resolve review
   threads.
 
-**Taxonomy, statuses, the state machine, the Codex gate, the human gates, and the
+**Taxonomy, statuses, the state machine, the review gate, the human gates, and the
 version-bump / testing-cadence policy are owned by
 [`agents/gh-workflow/CONVENTIONS.md`](../../agents/gh-workflow/CONVENTIONS.md).**
 This skill **references** those sections and **never restates** their tables.
@@ -152,9 +152,9 @@ yourself by matching `items[].content.number == <issue#>` from `gh project item-
 <board-number> --owner <board-owner> --limit 300 --format json` (ids from
 PROFILE.md; mechanics in CONVENTIONS.md §3). Then the
 **pipeline** takes over: `gh-review` reviews the PR
-(the adversarial passes + reuse-review + the Codex gate) and, if it raises
-findings, `gh-fixer` addresses them. gh-resolve does **not** self-review deeply or
-address review threads.
+(the adversarial passes + reuse-review — its own findings are the review gate) and,
+if it raises findings, `gh-fixer` addresses them. gh-resolve does **not** self-review
+deeply or address review threads.
 
 ### 7. Handoff (parent reconcile is gh-merge's, not gh-resolve's)
 

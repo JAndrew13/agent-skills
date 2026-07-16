@@ -2,7 +2,7 @@
 
 **THE single source** for the dev-workflow taxonomy: title tags, kind
 labels, the board Status model, the state machine, refinement scoring, human gates,
-the Codex gate, and the version-bump / testing-cadence policy. Every `gh-*` skill
+the review gate (§8), and the version-bump / testing-cadence policy. Every `gh-*` skill
 (`gh-create-issue`, `gh-refine`, `gh-review`, `gh-fixer`, `gh-validate`, `gh-merge`,
 `gh-clean`, `gh-resolve`, `gh-lead`) **references this file instead of restating these
 tables** — the CLAUDE.md reuse ethos (one canonical home; change it here, reuse it
@@ -249,8 +249,8 @@ machine with "status label" read as "board Status".
 (Needs Refinement) --gh-refine--> (Open) | (Backlog) | [EPIC]+children | Unsafe! [STOP: human]
 (Open) --dispatch (lead or sweeper; claim)--> (In Progress)
 (In Progress) --gh-resolve: worktree, implement, PR--> (Awaiting Review)
-(Awaiting Review) --gh-review: adversarial passes + reuse-review + wait for Codex-->
-      findings --> (Reviewed)            no findings + Codex resolved --> (Awaiting Validation)
+(Awaiting Review) --gh-review: adversarial passes + reuse-review (Codex addressed if present)-->
+      findings --> (Reviewed)      review-stage findings clean/addressed --> (Awaiting Validation)
 (Reviewed) --gh-fixer: address every unresolved thread, reply in-thread--> (Awaiting Review)
 (Awaiting Validation) --CI green--> --gh-validate: PR branch in isolated worktree,
       behavioral test (UI via preview tools when relevant)--> (In Validation) -->
@@ -413,27 +413,50 @@ mechanics — do not implement them here.
 
 ---
 
-## 8. Codex pre-merge gate (D5)
+## 8. Review gate (Claude review stage is the required gate; Codex optional) (D5)
 
-The Codex hard pre-merge gate is **battle-tested policy and survives unchanged.** A skill
-references this section; it does not restate it.
+**The required pre-merge review gate is the Claude review stage's own findings** — the
+`gh-review` adversarial passes plus `reuse-review` on any `/src` diff. A PR advances
+`Awaiting Review → Awaiting Validation` when **that stage's own findings are clean or
+fully addressed**, and a merge proceeds from a `Validated` PR — both **independent of
+Codex**. A skill references this section; it does not restate it.
 
-- **Merge only after** (a) Codex has **posted its automated review** on the PR, **AND**
-  (b) **every** Codex review thread is **resolved** — each comment addressed with a
-  code/test/doc change *or* an explicit justified reply, and its thread marked resolved.
-- **A still-pending Codex review blocks merge** exactly as an unresolved thread does. "A
-  Codex review exists" is **not** "Codex comments resolved" — do not merge on the proxy.
-- **How to confirm:** query the PR's review threads via the GitHub tools / `gh` and
-  confirm zero unresolved threads remain before merging.
-- **Deferred Codex comment → tracked follow-up, loudly.** If a comment is deferred rather
-  than fixed, file a tracked follow-up issue and say so loudly (no silent scope
-  reduction); never resolve-and-ignore.
+> **Codex de-gating (2026-07-15 operator directive — "full Claude").** The dev-workflow
+> pipeline is Codex-independent. The `<codex-reviewer>` async automated review
+> (`chatgpt-codex-connector[bot]`, PROFILE.md) is **de-gated, not banned**: it is
+> addressed **if it posts**, but it is **never required** and **never blocks**. This
+> reverses the former hard pre-merge gate (see §10 D5, now marked amended): "a
+> still-pending Codex review blocks merge" and "leave at Awaiting Review until Codex
+> resolves" are **no longer policy**.
+
+- **The required gate — the Claude review stage's own findings.** `gh-review` runs its
+  adversarial passes and `reuse-review`, posts every finding on the PR, and the PR
+  advances to `Awaiting Validation` **only** when there are no outstanding
+  required-change (`[change-requested]` / BLOCKING) findings — i.e. its own findings are
+  clean, or every one has been addressed through the `gh-fixer` loop. This transition
+  does **not** wait on Codex in any way.
+- **Codex is addressed if present, never required.** If a Codex review **has** posted
+  actionable comments (`[change-requested]` or equivalent), treat them like any other
+  valid review finding: fix / reply in-thread / resolve them through the normal
+  `gh-fixer` loop. But a Codex review that is **pending, absent, or never posted must
+  NEVER hold** the `Awaiting Review → Awaiting Validation` transition or the merge — do
+  not leave a PR at `Awaiting Review` waiting for Codex to post, and do not block a merge
+  on a missing or unresolved Codex review.
+- **Recognize Codex so you can address it.** Keep the ability to *recognize* a Codex
+  review by its `<codex-reviewer>` author (PROFILE.md) so that, when one is present, its
+  actionable comments are picked up and worked. Recognition now serves **addressing**,
+  not gating.
+- **Deferred finding → tracked follow-up, loudly.** Any review finding — the Claude
+  review stage's own, or a Codex comment when one is present — that is deliberately
+  deferred rather than fixed becomes a **tracked follow-up issue**, called out loudly (no
+  silent scope reduction); never resolve-and-ignore.
 
 ### 422 self-review workaround
 
-On own-account PRs, `APPROVE` / `REQUEST_CHANGES` reviews can return HTTP **422**. Use
-**COMMENT-type** reviews instead, tagging each finding `[change-requested]` (a required
-change) or `[minor]` (a nit), so the worker still sees an actionable, categorized signal.
+The Claude review routine posts its findings as reviews on own-account PRs, where
+`APPROVE` / `REQUEST_CHANGES` reviews can return HTTP **422**. Use **COMMENT-type**
+reviews instead, tagging each finding `[change-requested]` (a required change) or
+`[minor]` (a nit), so the worker still sees an actionable, categorized signal.
 
 ---
 
@@ -479,7 +502,8 @@ competing cadence elsewhere.
 ## 10. Decision record (D1–D10)
 
 The FABLE_09 §1 decisions, with the operator's 2026-07-03 resolutions. **D1 is VETOED**
-(superseded by the Projects v2 board); **D8 is AMENDED**. D2–D7, D9, D10 confirmed.
+(superseded by the Projects v2 board); **D5 and D8 are AMENDED** (D5 by the 2026-07-15
+Codex de-gating). D2–D4, D6, D7, D9, D10 confirmed.
 
 | # | Decision (as adopted) | Status | Rationale |
 |---|---|---|---|
@@ -487,7 +511,7 @@ The FABLE_09 §1 decisions, with the operator's 2026-07-03 resolutions. **D1 is 
 | D2 | **Validation happens BEFORE merge:** `Awaiting Validation` (review clean + CI green) → `In Validation` (validator tests the PR **branch** in an isolated worktree) → `Validated` → merge. | Confirmed | Pre-merge validation keeps `main` clean; post-merge failure would need reverts. Fixes the brainstorm's contradiction. |
 | D3 | **One closed title-tag set** `[EPIC] [CHILD] [TASK] [BUG] [CHORE] [SPIKE] [IDEA]`; `[REFACTOR]`/`[DOCS]` retired as tags (remain kind labels). See §1. | Confirmed | Two drifting taxonomies are exactly the duplication debt CLAUDE.md prevents. Reconcile once, here. |
 | D4 | **Complexity + Blast Radius are structured `## Refinement` body fields**, not labels; Hard/Very-Hard **or** Large/Huge → `[EPIC]` + children. See §6. | Confirmed | Avoids a label explosion; keeps the score next to its evidence; still greppable. |
-| D5 | **Codex hard pre-merge gate survives unchanged** + the 422 COMMENT-review workaround. See §8. | Confirmed | Battle-tested gh-lead policy; dropping it silently would be a regression. |
+| **D5** | ~~Codex hard pre-merge gate survives unchanged.~~ **AMENDED 2026-07-15 (Codex de-gating — "full Claude"):** the required pre-merge gate is the **Claude review stage's own findings** (§8); Codex is **addressed if it posts but never required and never blocks**. The 422 COMMENT-review workaround is retained. See §8. | **AMENDED** | The pipeline went Codex-independent; the former hard Codex gate is no longer required. History kept — the gate existed and was battle-tested before 2026-07-15; it is now de-gated, not deleted. |
 | D6 | **gh-merge owns the version bump** at merge-to-`main` (patch when `/src` `/scripts` `/agents` `/tests` touched; children exempt; workers never touch the line). Testing-cadence policy moves here. See §9. | Confirmed | Existing policy, already debugged across sprints (#30/#198). |
 | D7 | **Named human gates** (§7) — epic finalization; before `In Progress` for Large/Huge; always `Unsafe!`; before merge for live-order / `.env` / track-5 — plus runaway guards (sweeper dispatch cap, max concurrent workers, assignee-claim). | Confirmed | FABLE_06 §13: an agent-settable boolean is not a gate. Born with the review points the strategy workflow lacked. |
 | **D8** | **Automation is phased** (A: manual/lead-dispatched skills → B: one polling sweeper routine, dry-run first → C: optional Actions triggers). **AMENDED:** every follow-up a skill defers — spike findings, validation kick-backs, pilot friction, sweeper phase transitions — becomes **its own ticket**. No untracked TODOs. | **AMENDED** | One poller = one throttle point. The amendment closes the untracked-deferral hole so all deferred effort is a tracked ticket. |
