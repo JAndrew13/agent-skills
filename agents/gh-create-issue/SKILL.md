@@ -9,8 +9,11 @@ description: Create high-quality GitHub issue tickets from identified problems, 
 (gh-refine epic conversions, gh-resolve / gh-fixer deferred-scope follow-ups);
 fully runnable standalone.
 **Conventions scope:** read only §§1, 2, 3 of
-`agents/gh-workflow/CONVENTIONS.md` (`grep -n "^## "` it for section offsets and read
-just those ranges); open any other section only at the moment a step cites it.
+the pipeline CONVENTIONS.md — resolve it at `gh-workflow/CONVENTIONS.md`
+alongside this installed skill set, else `agents/gh-workflow/CONVENTIONS.md` in
+the skill source repo (github.com/JAndrew13/agent-skills); it is NOT in the
+target repo. `grep -n "^## "` it for section offsets and read just those
+ranges; open any other section only at the moment a step cites it.
 
 ## Overview
 

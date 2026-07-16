@@ -8,8 +8,11 @@ description: Address every unresolved review thread on exactly one GitHub pull r
 **Session shape:** spawned subagent, one per PR fix cycle, in its own worktree off
 the PR branch — never the operator's main worktree.
 **Conventions scope:** read only §§3, 5, 8, 9, 10 of
-`agents/gh-workflow/CONVENTIONS.md` (`grep -n "^## "` it for section offsets and read
-just those ranges); open any other section only at the moment a step cites it.
+the pipeline CONVENTIONS.md — resolve it at `gh-workflow/CONVENTIONS.md`
+alongside this installed skill set, else `agents/gh-workflow/CONVENTIONS.md` in
+the skill source repo (github.com/JAndrew13/agent-skills); it is NOT in the
+target repo. `grep -n "^## "` it for section offsets and read just those
+ranges; open any other section only at the moment a step cites it.
 
 ## Overview
 

@@ -8,7 +8,10 @@ description: Act as the sole project manager / GitHub lead for a repository — 
 **Session shape:** resident orchestrator session — boots once and stays for the whole
 sprint; never inlines a stage; dispatches every stage as a fresh spawned subagent.
 **Conventions scope:** read the whole document — the orchestrator is the one agent
-that genuinely needs nearly all of `agents/gh-workflow/CONVENTIONS.md`.
+that genuinely needs nearly all of the pipeline CONVENTIONS.md (resolve at
+`gh-workflow/CONVENTIONS.md` alongside this installed skill set, else
+`agents/gh-workflow/CONVENTIONS.md` in github.com/JAndrew13/agent-skills; it
+is NOT in the target repo).
 **Routine coexistence:** event-triggered cloud routines may pre-run the refine
 (Issue: Opened), review (PR opened/updated), and remote-branch-cleanup (PR
 Closed) stages before this session dispatches them. Before dispatching

@@ -8,8 +8,11 @@ description: Behaviorally validate exactly one GitHub pull request before merge 
 **Session shape:** spawned subagent, one per PR; pulls the PR branch into its own
 isolated worktree — never the operator's main worktree.
 **Conventions scope:** read only §§3, 4, 5, 8, 9 of
-`agents/gh-workflow/CONVENTIONS.md` (`grep -n "^## "` it for section offsets and read
-just those ranges); open any other section only at the moment a step cites it.
+the pipeline CONVENTIONS.md — resolve it at `gh-workflow/CONVENTIONS.md`
+alongside this installed skill set, else `agents/gh-workflow/CONVENTIONS.md` in
+the skill source repo (github.com/JAndrew13/agent-skills); it is NOT in the
+target repo. `grep -n "^## "` it for section offsets and read just those
+ranges; open any other section only at the moment a step cites it.
 
 ## Overview
 

@@ -8,8 +8,11 @@ description: Refine exactly one GitHub issue before any code is written — vali
 **Session shape:** spawned subagent, one per ticket; no worktree (issue reads/edits
 only — never a code checkout).
 **Conventions scope:** read only §§1, 2, 3, 4, 5, 6, 7, 8, 9, 10 of
-`agents/gh-workflow/CONVENTIONS.md` (`grep -n "^## "` it for section offsets and read
-just those ranges); open any other section only at the moment a step cites it.
+the pipeline CONVENTIONS.md — resolve it at `gh-workflow/CONVENTIONS.md`
+alongside this installed skill set, else `agents/gh-workflow/CONVENTIONS.md` in
+the skill source repo (github.com/JAndrew13/agent-skills); it is NOT in the
+target repo. `grep -n "^## "` it for section offsets and read just those
+ranges; open any other section only at the moment a step cites it.
 **Routine trigger (optional):** this stage may run as an event-triggered cloud
 routine (Issue: Opened). A routine invocation is a standalone invocation (no
 injected item-id) and MUST skip-guard first: exit without acting if the body
