@@ -451,12 +451,30 @@ Codex**. A skill references this section; it does not restate it.
   deferred rather than fixed becomes a **tracked follow-up issue**, called out loudly (no
   silent scope reduction); never resolve-and-ignore.
 
-### 422 self-review workaround
+### 422 self-review workaround — findings are inline, resolvable threads
 
-The Claude review routine posts its findings as reviews on own-account PRs, where
-`APPROVE` / `REQUEST_CHANGES` reviews can return HTTP **422**. Use **COMMENT-type**
-reviews instead, tagging each finding `[change-requested]` (a required change) or
-`[minor]` (a nit), so the worker still sees an actionable, categorized signal.
+The Claude review routine authenticates as the same `<automation-login>` as the PR
+author, so only the `APPROVE` / `REQUEST_CHANGES` review **states** are unavailable on
+own-account PRs (HTTP **422**). The resolvable-thread mechanism is **not** blocked: post
+every finding as an **inline, line-anchored review comment**, which becomes its own
+`PullRequestReviewThread` carrying an `isResolved` flag — exactly like the
+`<codex-reviewer>` — wrapped in a **COMMENT-event** review (allowed same-account;
+verified). Do **not** dump findings into one flat top-level comment body: that leaves no
+resolvable thread and defeats the mechanical gate.
+
+- **Each finding = one inline thread, tagged.** Anchor every finding to the exact
+  `file:line` and tag it `[change-requested]` (required) or `[minor]` (nit) in the body.
+  This is what lets `gh-fixer` reply-and-**resolve** each thread and makes the gate
+  mechanically checkable: **the `Awaiting Review → Awaiting Validation` transition and the
+  merge require zero unresolved (`isResolved:false`) `[change-requested]` threads authored
+  by the review stage (`<automation-login>`).** A top-level review body is only for the
+  overall verdict summary, never the sole carrier of a finding. (A `<codex-reviewer>`
+  thread is addressed-if-present but never gates — the de-gating above.)
+- **Recipe (own-account, verified):** one inline comment via
+  `POST /repos/<repo>/pulls/<n>/comments` with `{body, commit_id:<PR head SHA>, path,
+  line, side:"RIGHT"}`, or batch them in `POST .../pulls/<n>/reviews` with
+  `event:"COMMENT"` and a `comments:[{path, line, body}]` array. Read state back with
+  `reviewThreads { nodes { isResolved comments { nodes { author { login } } } } }`.
 
 ---
 
