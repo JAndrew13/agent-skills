@@ -208,8 +208,12 @@ positive artifact instead.
 **Reuse the review stage's own head-SHA artifact — do not invent a second mechanism.** This
 is the same lookup `gh-review` already performs for its routine idempotency guard ("a review
 comment for this exact head SHA has already been posted"), which is precisely why that stage
-is required to **state the head SHA it reviewed** — `routines/gh-review.routine.md` step 4,
-the writer-side obligation this gate consumes. One `gh pr view` plus one API read:
+is required to **state the head SHA it reviewed**. That is the writer-side obligation this
+gate consumes, and it is stated on **both** of gh-review's producer paths —
+`agents/gh-review/SKILL.md` step 5 (the primary *spawned-subagent* shape) and the optional
+cloud routine `routines/gh-review.routine.md` step 4. **Both, deliberately:** a gate that
+consumed an artifact only one path was obliged to emit would refuse, forever, a PR the other
+path had genuinely reviewed. One `gh pr view` plus one API read:
 
 ```sh
 gh pr view <pr> --json headRefOid --jq .headRefOid          # the CURRENT head SHA about to land
@@ -224,9 +228,10 @@ counts as completed for this head SHA only when **all** of the following hold:
 
 1. **It is a terminal verdict summary**: a review object from `<automation-login>` carrying a
    **non-empty top-level body** that **names this head SHA**. This is the primary criterion.
-   `routines/gh-review.routine.md` step 4 mandates exactly this artifact ("A top-level body is
-   only for the overall verdict summary. State the head SHA you reviewed."), and it is the
-   *last* thing the review stage emits — which is what makes it evidence of **completion**.
+   `agents/gh-review/SKILL.md` step 5 and `routines/gh-review.routine.md` step 4 mandate
+   exactly this artifact, in the same words ("A top-level body is only for the overall verdict
+   summary. State the head SHA you reviewed."), and it is the *last* thing the review stage
+   emits — which is what makes it evidence of **completion**.
 2. Its `commit_id` equals `headRefOid` — **corroborating**, not sufficient on its own.
 3. It is the review stage's own COMMENT-event review (§8's 422 recipe) — not a `gh-validate`
    verdict and not the `<codex-reviewer>`.
@@ -264,12 +269,25 @@ verdict body **and** inline comments in one COMMENT-event review — observed on
 reject that valid review. The **non-empty body naming the head SHA** is the reliable signal;
 the inline count is not.
 
-**The converse failure does not occur.** A verdict summary is genuinely emitted in practice
-(#1179's names its SHA in the opening line), so keying on it creates no false-negative
-livelock — the objection that this criterion might refuse a fully-reviewed PR forever is
-answered by observation. Accordingly, a review posted **only** as inline comments with no
-verdict summary is **not** a completed review: that is a review-stage contract violation, and
-the disposition is *stop and surface*, not merge.
+**The converse failure does not occur — because BOTH producer paths are obliged to emit the
+summary.** The objection this answers is a real one: if the artifact were optional on any path
+that produces a review, a genuinely-reviewed PR would observe as *never reviewed*, land on the
+"stop and surface" row, return to `Awaiting Review`, be re-reviewed to the identical output —
+a **livelock**, and one this gate would itself have introduced. What forecloses it is that the
+obligation is stated on **every** producer path, not on any single observation: the skill
+`agents/gh-review/SKILL.md` step 5 and the routine `routines/gh-review.routine.md` step 4 both
+carry it, and `test_step3_input_contract_is_the_review_routines_writer_obligation` pins it in
+**both** files so neither can silently drop it.
+
+**Scope the field evidence honestly.** The observed emission — #1179's verdict summary names
+its SHA in the opening line — was a **routine** run, so it corroborates the routine path only;
+it never covered the skill path, which is the *primary* shape (`agents/gh-review/SKILL.md:6`,
+"spawned subagent"). Treat that observation as corroboration, not as the guarantee. The
+guarantee is the two-sided obligation above.
+
+Accordingly, a review posted **only** as inline comments with no verdict summary is **not** a
+completed review: that is a review-stage contract violation on a path that was required to
+emit one, and the disposition is *stop and surface*, not merge.
 
 **Refusal condition — stated in this one place.** If **no** review-stage verdict summary names the
 PR's current head SHA, the PR is **unreviewed**: do not merge it. **Absence of a review is a

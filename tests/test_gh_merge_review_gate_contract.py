@@ -166,47 +166,93 @@ def test_completion_discriminator_is_the_body_never_the_inline_count() -> None:
     assert "livelock" in lowered
 
 
-def test_step3_input_contract_is_the_review_routines_writer_obligation() -> None:
-    """Pin the WRITER-side obligation Step 3.1 consumes, and bind the reader to it (F3).
+def test_step3_input_contract_is_carried_by_BOTH_gh_review_producer_paths() -> None:
+    """Pin the WRITER-side obligation Step 3.1 consumes -- on EVERY path that emits it (F1 r3).
 
     ``_REVIEW_PRECEDENT`` (below) pins gh-review's *reader-side* idempotency guard -- that
     is gh-review checking ITSELF before it acts, which Step 3.1 does not consume. What
-    Step 3.1 actually consumes is the obligation that the review stage **emits** the SHA,
-    in ``routines/gh-review.routine.md`` step 4. Before this test, no test in this file
-    referenced that file at all: deleting that one sentence would silently remove the new
-    gate's only input with the whole suite still green.
+    Step 3.1 actually consumes is the obligation that the review stage **emits** the SHA.
 
-    Two halves, deliberately: (a) preservation -- the routine keeps the obligation; (b)
-    forward-looking -- gh-merge names that file as its input contract, so the reader and
-    the writer cannot drift apart unnoticed. (b) is what makes this fail on unpatched main.
+    Round 2 pinned that obligation in ``routines/gh-review.routine.md`` step 4 only. But
+    gh-review has **two** producer paths, and the routine is the *optional* one:
+    ``agents/gh-review/SKILL.md:6`` declares ``Session shape: spawned subagent`` as the
+    primary shape and ``:16`` marks the routine ``Routine trigger (optional)``. At round 2's
+    head the skill mandated no verdict body at all -- its only ``head SHA`` occurrence was
+    the reader-side guard round 1's F3 already ruled out. So a skill-path review produced
+    the same observation as *never reviewed*: row 2 -> ``Awaiting Review`` -> re-review ->
+    identical output. A **livelock on a genuinely reviewed PR**, introduced by this gate.
+
+    Hence the obligation is now asserted in BOTH producers, in the same words, plus
+    (c) gh-merge naming both as its input contract. Dropping it from either file --
+    or the routine-only regression -- fails here.
     """
-    routine = _read(_REVIEW_ROUTINE)
-    flat_routine = _flat(routine)
-
-    # (a) The writer obligation survives -- and stays attached to the VERDICT SUMMARY,
-    #     which is what Step 3.1 matches on (see the F2 criterion above).
-    assert _WRITER_OBLIGATION in flat_routine, (
-        "routines/gh-review.routine.md must keep 'State the head SHA you reviewed.' -- "
-        "it is the entire input contract for gh-merge Step 3.1"
-    )
-    assert _WRITER_OBLIGATION_CONTEXT in flat_routine, (
-        "the head-SHA obligation must stay bound to the top-level verdict summary"
-    )
-    # The obligation must sit in the SAME step as the verdict-summary sentence, not drift
-    # into an unrelated part of the routine.
-    assert flat_routine.index(_WRITER_OBLIGATION) - flat_routine.index(
-        _WRITER_OBLIGATION_CONTEXT
-    ) < 200, "the two sentences must remain adjacent (same routine step)"
-
-    # (b) gh-merge Step 3.1 names that file as the source of its input, and quotes the
-    #     obligation verbatim -- so a future edit to either side breaks this test.
     step3 = _flat(_step3_section(_read(_MERGE)))
-    assert "routines/gh-review.routine.md" in step3, (
-        "Step 3.1 must cite the writer-side obligation it depends on"
-    )
+
+    # (a)+(b) BOTH producers carry the obligation, bound to the verdict-summary sentence.
+    #         Iterating the pair is the point: a future third producer gets added here.
+    producers = {
+        "routines/gh-review.routine.md": _REVIEW_ROUTINE,
+        "agents/gh-review/SKILL.md": _REVIEW,
+    }
+    for label, path in producers.items():
+        flat = _flat(_read(path))
+        assert _WRITER_OBLIGATION in flat, (
+            f"{label} must carry 'State the head SHA you reviewed.' -- gh-merge Step 3.1 "
+            "refuses to merge without that artifact, so a producer that omits it livelocks "
+            "a genuinely-reviewed PR"
+        )
+        assert _WRITER_OBLIGATION_CONTEXT in flat, (
+            f"{label}: the head-SHA obligation must stay bound to the top-level verdict summary"
+        )
+        # The obligation must sit adjacent to the verdict-summary sentence, not drift into
+        # an unrelated part of the file.
+        assert 0 <= flat.index(_WRITER_OBLIGATION) - flat.index(
+            _WRITER_OBLIGATION_CONTEXT
+        ) < 200, f"{label}: the two sentences must remain adjacent (same step)"
+
+    # (c) gh-merge Step 3.1 names BOTH files as the source of its input, and quotes the
+    #     obligation verbatim -- so reader and writers cannot drift apart unnoticed.
+    for label in producers:
+        assert label in step3, (
+            f"Step 3.1 must cite {label} -- every producer path of the artifact it consumes"
+        )
     assert "writer-side obligation this gate consumes" in step3.lower()
     assert _WRITER_OBLIGATION in step3, "Step 3.1 quotes the obligation verbatim"
     assert _WRITER_OBLIGATION_CONTEXT in step3
+
+
+def test_no_false_negative_claim_rests_on_the_obligation_not_the_routine_evidence() -> None:
+    """The livelock foreclosure must cite the two-sided obligation, not one routine run (F1 r3).
+
+    Round 2's text foreclosed the converse failure by *observation*: "a verdict summary is
+    genuinely emitted in practice (#1179's names its SHA in the opening line), so keying on
+    it creates no false-negative livelock ... answered by observation." #1179 was a
+    **routine** run, so that evidence never covered the skill path -- the path gh-review
+    itself calls primary. An unsupported no-false-negative claim is worse than none: it
+    stops the next reader from checking.
+
+    So the claim must now rest on the obligation being stated on every producer path, and
+    the field evidence must be scoped to the path it actually came from.
+    """
+    step3 = _flat(_step3_section(_read(_MERGE)))
+
+    # The foreclosure is grounded in the obligation, on BOTH paths.
+    assert "because both producer paths are obliged to emit the summary" in step3.lower(), (
+        "the no-false-negative claim must be grounded in the two-sided writer obligation"
+    )
+    # The livelock is named as the thing being foreclosed, so the risk stays legible.
+    assert "livelock" in step3.lower()
+
+    # The #1179 evidence is explicitly scoped to the routine path and demoted to
+    # corroboration -- it must NOT be presented as the guarantee.
+    assert "was a **routine** run" in step3, (
+        "the #1179 observation must be scoped to the routine path it came from"
+    )
+    assert "corroboration, not as the guarantee" in step3, (
+        "the routine-path observation must be demoted to corroboration"
+    )
+    # And the skill path is named as primary, so the asymmetry is visible.
+    assert "spawned subagent" in step3
 
 
 def test_completed_means_the_verdict_summary_body_not_any_review_object() -> None:

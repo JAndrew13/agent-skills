@@ -157,6 +157,25 @@ inline is the default, not the fallback.
   review and tag each `[change-requested]` (required) or `[minor]` (nit). Follow §8's
   recipe so each finding lands as its own `isResolved:false` thread; do not restate it.
 
+**Close the pass with a top-level verdict summary that names the head SHA — the
+terminal artifact of every pass, findings or clean.** A top-level body is only for the
+overall verdict summary. State the head SHA you reviewed. Post it with the inline threads
+(§8's batched `event:"COMMENT"` recipe carries body **and** `comments:[…]` in one call) or
+immediately after them, and always before the board write below — it is the *last* thing
+this stage emits, which is what makes it evidence that the pass **completed** rather than
+merely started.
+
+- **This is a hard obligation, not bookkeeping — `gh-merge` Step 3.1 consumes it.** That
+  gate refuses to merge unless a review-stage verdict summary names the PR's *current* head
+  SHA: absence of one reads to it as **never reviewed**, and it is fail-closed. A pass that
+  posts only inline threads and no SHA-naming summary therefore leaves a genuinely-reviewed
+  PR unmergeable — it is kicked back to `Awaiting Review` and re-reviewed to the same
+  output. Emitting the summary is what closes that loop.
+- **Both producer paths carry this obligation identically** — this skill (the primary
+  spawned-subagent shape) and the optional cloud routine
+  (`routines/gh-review.routine.md` step 4). Neither may drop it; a merge gate that
+  consumed an artifact only one path emitted would livelock on the other.
+
 Then move the board Status via `gh project item-edit` (never a label — mechanics
 and IDs in CONVENTIONS.md §3; ownership in §5):
 
