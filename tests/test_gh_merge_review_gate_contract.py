@@ -94,6 +94,26 @@ def _worked_example(text: str) -> str:
     return text[text.index(_WORKED_EXAMPLE_HEADING) :]
 
 
+def _fenced_lines(text: str) -> list[tuple[int, str]]:
+    """``(lineno, line)`` for every line INSIDE a fenced block, comments included.
+
+    The recipes are what an agent copies and runs, so a ``# OR: <command>`` comment inside a
+    fence is an instruction, not an annotation -- both round-3 defects (``git merge --no-ff``
+    and the re-read ``--match-head-commit``) have to be caught there. Prose OUTSIDE a fence is
+    deliberately exempt: the ban lists and the removal rationale must be able to name and
+    quote the very patterns they forbid.
+    """
+    out: list[tuple[int, str]] = []
+    in_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            out.append((lineno, line))
+    return out
+
+
 def _occurrences(needle: str) -> dict[Path, int]:
     found: dict[Path, int] = {}
     flat_needle = _flat(needle)
@@ -801,14 +821,11 @@ def test_head_movement_commands_after_step31_are_a_closed_sanctioned_set() -> No
     #     instruction, not an annotation, so comments are scanned too. (Prose OUTSIDE a
     #     fence may name `git merge` freely -- the ban list and the removal rationale must
     #     be able to say the words.)
-    offenders = []
-    in_fence = False
-    for lineno, line in enumerate(merge.splitlines(), start=1):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence and re.search(r"\bgit\s+(-C\s+\S+\s+)?merge\b", line):
-            offenders.append(f"{lineno}: {line.strip()}")
+    offenders = [
+        f"{lineno}: {line.strip()}"
+        for lineno, line in _fenced_lines(merge)
+        if re.search(r"\bgit\s+(-C\s+\S+\s+)?merge\b", line)
+    ]
     assert not offenders, (
         "no fenced recipe in gh-merge may contain `git merge` -- in code OR in a comment: "
         "it produces a merge commit the checkout assertion can never satisfy on the healthy "
@@ -880,6 +897,60 @@ def test_no_gh_merge_push_is_ever_non_fast_forward() -> None:
         if re.search(r"^\s*git push\b", line) and "--force" in line
     ]
     assert not forced, f"gh-merge must never force-push: {forced}"
+
+
+def test_merge_pin_is_the_proved_commit_never_a_re_read_head() -> None:
+    """``--match-head-commit`` must name the PINNED commit, not a fresh read (F3 round 3).
+
+    The parentage assertion proves a *specific* commit, but every merge site then re-read
+    ``$(git rev-parse HEAD)``. That is the exact pattern Step 3.1 forbids for the remote SHA
+    ("never re-read it -- re-reading re-opens the race it exists to close"), one level down,
+    and the window was sealed by prose alone: a ban sitting ~28 lines below the push and
+    restated at neither dry-run site.
+
+    Measured why it matters: with a foreign commit ``C`` on the branch, the parentage
+    assertion PASSES (``C`` is not in local history) and the plain push is REJECTED -- but
+    git's rejection prints ``hint: ... use 'git pull' before pushing again``, the exact
+    banned action. Following it pulls ``C`` in, the retried push SUCCEEDS, and a re-read
+    ``--match-head-commit`` PASSES with ``C`` included. Pinning the proved value first makes
+    the ban enforced rather than merely stated: the flag still names the proved commit, so
+    the merge is refused even if someone pulled.
+    """
+    merge = _read(_MERGE)
+
+    # (a) No RECIPE may re-read HEAD for the pin. Scanned inside fences only -- the prose
+    #     above quotes this exact pattern to explain why it is wrong.
+    rereads = [
+        f"{lineno}: {line.strip()}"
+        for lineno, line in _fenced_lines(merge)
+        if "--match-head-commit" in line and "$(git rev-parse HEAD)" in line
+    ]
+    assert not rereads, (
+        "--match-head-commit must use the pinned value proved by the parentage assertion, "
+        f"never a fresh `git rev-parse HEAD` at merge time: {rereads}"
+    )
+
+    # (b) Every bump-and-merge site pins the proved commit into a variable first, and the
+    #     merge uses that variable. Three sites: the canonical recipe + both dry runs.
+    for var in ("BUMPED", "BUMPED901", "BUMPED902"):
+        assert f"{var}=$(git rev-parse HEAD)" in merge, (
+            f"the proved commit must be pinned as {var} immediately after the parentage proof"
+        )
+        assert f'--match-head-commit "${var}"' in merge, (
+            f"the merge must be pinned to {var}, the commit the assertion proved"
+        )
+
+    # (c) The recovery is co-located at the push -- read BEFORE git's own contrary advice --
+    #     and names `git pull` explicitly, not only `--force`.
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    assert "ON REJECTION" in step5, "the push line must carry its own recovery guidance"
+    assert "before pushing again" in step5, (
+        "the recovery must quote git's own hint, since that hint recommends the banned action"
+    )
+    # The stop-don't-force prose must ban BOTH, git pull included.
+    assert "neither `--force` **nor**\n   `git pull`" in step5 or (
+        "--force" in step5 and "`git pull` is what git itself prints" in step5
+    ), "the rejection response must ban `git pull`, not only `--force`"
 
 
 def test_local_head_proof_is_bound_to_the_pushed_head_by_a_stated_ordering() -> None:

@@ -501,9 +501,30 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    #   ...edit <version-file>, stage ONLY that file, commit — Step 6...
    git rev-parse HEAD^                                  # MUST equal <reviewed-sha> -> else a
                                                         # foreign commit landed: STOP, back to Step 3.1
+   BUMPED=$(git rev-parse HEAD)                         # PIN the proved commit — never re-read it
    git push origin HEAD:<pr-head-branch>                # plain push; fast-forward BY CONSTRUCTION
-   gh pr merge <pr> --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+   #   ON REJECTION: STOP. A foreign commit landed. git will hint "use 'git pull' before
+   #   pushing again" — do NOT: `git pull` splices that commit in and makes BOTH the push and
+   #   --match-head-commit succeed with unreviewed code. Never --force either. Back to Step 3.1.
+   gh pr merge <pr> --squash --delete-branch --match-head-commit "$BUMPED"
    ```
+
+   **Pin `BUMPED`; do not re-read `HEAD` at merge time.** The assertion above proves a
+   *specific* commit; `--match-head-commit` must then re-check **that** value, not whatever
+   `HEAD` happens to be by the time the merge runs. Re-reading it re-opens the same
+   time-of-check/time-of-use gap Step 3.1 closes for `<reviewed-sha>` ("never re-read it —
+   re-reading re-opens the race it exists to close"), one level down. Carry the proved value
+   forward exactly as `<reviewed-sha>` is carried.
+
+   **Why this is load-bearing and not stylistic — git's own advice points at the banned
+   action.** Measured: with a foreign commit `C` on the PR branch, the parentage assertion
+   still **passes** (`C` is not in local history), the plain push is **rejected**, and git
+   prints `hint: ... use 'git pull' before pushing again`. Following that hint pulls `C` into
+   local history; the retried push then **succeeds**, and a re-read
+   `--match-head-commit "$(git rev-parse HEAD)"` **passes** — landing a commit no reviewer saw.
+   With `BUMPED` pinned before the push, the flag still names the proved commit, so the merge
+   is refused even if someone did pull. The ban below is the rule; the pin is what survives the
+   rule being broken.
 
    Because the bump is authored **on** `<reviewed-sha>`, `HEAD^ == <reviewed-sha>` holds by
    construction; the assertion can therefore only fail when something *else* moved the head,
@@ -519,7 +540,11 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    **No push gh-merge makes is ever non-fast-forward**, so `--force` is never needed and never
    permitted: the only thing it ever publishes is one commit authored on top of the current
    remote head. A rejection therefore always means a foreign commit landed — the same race
-   caught one step earlier — and the response is to stop, not to force.
+   caught one step earlier — and the response is to **stop**: neither `--force` **nor**
+   `git pull`. Name both, because only one of them is the tempting one: `--force` is an idea
+   the operator has to supply, whereas **`git pull` is what git itself prints** in the
+   rejection hint. The recovery is stated at the push line above so it is read *before* git's
+   advice, not 60 lines later.
 
    **The local→remote transfer, and the ordering it rests on (load-bearing, not incidental).**
    The assertion reads the **local** `HEAD^`, while what must be trustworthy is the **pushed**
@@ -527,11 +552,14 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    proof: (1) the bump is authored **locally** on `<reviewed-sha>`; (2) it is published with a
    **plain, non-`--force`** push, which succeeds *only* if the remote head is still
    `<reviewed-sha>` — so after a successful push the remote head **is** the local `HEAD`;
-   (3) `--match-head-commit "$(git rev-parse HEAD)"` re-checks that same value server-side at
-   merge time. **Never re-sync local from remote between the bump and the merge** — no
-   `git pull`, no `fetch` + `reset --hard`, no second `gh pr checkout`. Doing so would splice a
-   foreign commit into the local history *below* `HEAD^` and degrade the proof to "parentage is
-   not authorship."
+   (3) `--match-head-commit "$BUMPED"` re-checks **that same pinned value** server-side at
+   merge time — the commit step (1) proved, not a fresh `git rev-parse HEAD`. **Never re-sync
+   local from remote between the bump and the merge** — no `git pull`, no `fetch` +
+   `reset --hard`, no second `gh pr checkout`. Doing so would splice a foreign commit into the
+   local history *below* `HEAD^` and degrade the proof to "parentage is not authorship." The
+   pin is what makes that ban **enforced rather than merely stated**: a re-read
+   `--match-head-commit` would happily confirm the spliced head, while `"$BUMPED"` names the
+   proved commit and the merge is refused.
 
    **Foreign-commit refusal — two independent catches, neither forceable.** A commit `C` this
    procedure did not author lands either **before** the Step 5.0 checkout — caught by Step 3.1
@@ -755,9 +783,12 @@ git show --stat HEAD                                # VERIFY exactly one file (<
 #   The assertion holds BY CONSTRUCTION (the bump was authored on $SHA901); it fails only if
 #   something ELSE moved the head:
 [ "$(git rev-parse HEAD^)" = "$SHA901" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+BUMPED901=$(git rev-parse HEAD)                     # PIN the proved commit; never re-read at merge time
 git push origin HEAD:<pr901-head-branch>            # plain push, fast-forward BY CONSTRUCTION (never
                                                     # --force); squash lands the REMOTE head
-gh pr merge 901 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+#   ON REJECTION: STOP. git hints "use 'git pull' before pushing again" — do NOT; that splices
+#   the foreign commit in and makes both the push and the merge pin pass. Back to Step 3.1.
+gh pr merge 901 --squash --delete-branch --match-head-commit "$BUMPED901"
 #   -> if GitHub refuses (head moved), someone else pushed: STOP, do NOT retry without the
 #      flag — back to Step 3.1 for the new SHA (fresh review + fresh full suite).
 # Step 8 close the issue (the authoritative "done" signal), then retire the board item:
@@ -807,9 +838,11 @@ git add <version-file> && git commit -m "chore: bump version 1.0.(NN+1) -> 1.0.(
 git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
 # Step 5.3 same parent proof as #901 (holds BY CONSTRUCTION), then push and squash-merge:
 [ "$(git rev-parse HEAD^)" = "$SHA902" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+BUMPED902=$(git rev-parse HEAD)                     # PIN the proved commit; never re-read at merge time
 git push origin HEAD:<pr902-head-branch>            # plain push, fast-forward BY CONSTRUCTION; push to
                                                     # the PR head BEFORE merge, else the squash drops it
-gh pr merge 902 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+#   ON REJECTION: STOP — never `git pull` (git's own hint), never --force. Back to Step 3.1.
+gh pr merge 902 --squash --delete-branch --match-head-commit "$BUMPED902"
 # Step 8 close the issue, then retire the board item (no closed Status option — leave at Validated or remove):
 gh issue close 802
 gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board-number>   # option (b); or leave at Validated
