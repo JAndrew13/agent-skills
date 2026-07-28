@@ -288,6 +288,29 @@ def test_dry_run_example_pins_both_merge_sites_to_the_reviewed_sha() -> None:
     assert "SHA902=$(gh pr view 902 --json headRefOid" in example
 
 
+def test_disposition_rows_are_disjoint_with_stated_precedence() -> None:
+    """The wait/surface rows must not overlap, or a failed run becomes a silent stall (F6).
+
+    The original row 1 fired on "or a review exists for an EARLIER SHA on this PR" with no
+    age qualifier. A PR reviewed at X, pushed to Y, whose re-review run for Y failed hours
+    ago satisfies BOTH rows; read top-down an agent waits and re-polls forever on a run
+    that will never post. Neither disposition merges unsafely -- so this is a stall, not a
+    gate hole -- but it is the same invisibility class the ticket exists to close.
+    """
+    step3 = _flat(_step3_section(_read(_MERGE)))
+    lowered = step3.lower()
+
+    assert "the rows are disjoint" in lowered
+    # The age test decides, and the surface row wins the overlap explicitly.
+    assert "row 2 wins regardless of what exists for earlier shas" in lowered
+    assert "takes precedence" in lowered
+    # Row 1's earlier-SHA clause is conjunctive with the age test, not a bare `or`.
+    assert "younger than that latency **and**" in step3
+    # Waiting is bounded -- a re-poll that finds nothing escalates rather than looping.
+    assert "moves the pr to row 2" in lowered
+    assert "silent *stall*" in step3 or "silent\n*stall*" in _read(_MERGE)
+
+
 def test_step3_head_sha_match_is_exact_so_a_new_push_invalidates_the_review() -> None:
     lowered = " ".join(_step3_section(_read(_MERGE)).lower().split())
     assert "a review of an earlier commit does not carry" in lowered

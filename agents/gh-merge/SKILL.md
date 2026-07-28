@@ -268,10 +268,18 @@ review-stage verdict summary names this head SHA. The routine's internal executi
 in GitHub artifacts and you do not need it — the single check above already covers all three.
 Only the **disposition** differs:
 
+**The rows are disjoint, and the age test decides — read row 2 first.** Both clauses in row 1
+are qualified by the window, so "a review exists for an earlier SHA" never on its own licenses
+waiting: once the window has elapsed, **row 2 wins regardless of what exists for earlier
+SHAs**. Without that precedence the overlap converts a silent failed run into a silent
+*stall* — a PR reviewed at SHA X, pushed to SHA Y, whose re-review run for Y failed hours ago,
+satisfies both rows, and a top-down reader would wait and re-poll forever on a run that will
+never post. Same invisibility class the requirement exists to close.
+
 | Observation (no review-stage verdict summary names the current head SHA) | Disposition |
 |---|---|
-| The head SHA is younger than the review stage's observed latency (**7–16 min**), or a review exists for an **earlier** SHA on this PR | A run is **in flight → wait and re-poll.** Never merge into a running review — that is exactly the #1150 race. |
-| Still absent well past that window, or a re-poll window elapsed with nothing new posted | The run **never started or failed → stop and surface.** A failed run is **silent**: nothing alerts on it, so it must be re-triggered explicitly (#1118 was recovered only because the operator noticed). Kick the PR back to `Awaiting Review`. |
+| **Row 2 — the window has elapsed.** The head SHA is older than the review stage's observed latency (**7–16 min**), or a re-poll window elapsed with nothing new posted. **Takes precedence** — applies even when a review exists for an earlier SHA. | The run **never started or failed → stop and surface.** A failed run is **silent**: nothing alerts on it, so it must be re-triggered explicitly (#1118 was recovered only because the operator noticed). Kick the PR back to `Awaiting Review`. |
+| **Row 1 — still inside the window.** The head SHA is younger than that latency **and** (nothing posted yet **or** a review exists only for an **earlier** SHA on this PR). | A run is **in flight → wait and re-poll.** Never merge into a running review — that is exactly the #1150 race. Bound the waiting: each re-poll that ends with nothing new moves the PR to row 2. |
 
 **Fail loud and specific** — name the missing review, the head SHA it is missing for, and the
 disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage verdict summary names
