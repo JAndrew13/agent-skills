@@ -374,10 +374,10 @@ tightly-guarded merger**. The lead never merges inline. `gh-merge` owns the enti
 
 - plans a **collision-aware merge order** across all open `Validated` PRs (actual
   diff file-sets, hot-file serialize rules, rebase-and-re-verify);
-- **re-confirms the review gate at merge time** (CONVENTIONS.md §8 — the PR reached
-  `Validated` via the Claude review+validation stages; Codex is addressed if present
-  but never required) and the **D7 high-risk-surface human gate** (§7d — live-order /
-  `.env` / track-5);
+- **re-confirms the review gate at merge time** (CONVENTIONS.md §8 — a **completed**
+  review of the PR's current head SHA, plus the PR having reached `Validated` via the
+  Claude review+validation stages; Codex is addressed if present but never required)
+  and the **D7 high-risk-surface human gate** (§7d — live-order / `.env` / track-5);
 - runs the **full `pytest -q` suite once per merge-to-`main` boundary** on the
   actual merged tree, plus the fast gates (CONVENTIONS.md §9);
 - **squash-merges** (standalones/epics to `main`, children to the epic branch);

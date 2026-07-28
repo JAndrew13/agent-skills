@@ -1,6 +1,6 @@
 ---
 name: gh-merge
-description: Merge Validated pull requests to main — the pipeline's single, tightly-guarded merger. Plans a collision-aware merge order across all open Validated PRs, re-confirms the review gate and CI at merge time (the Claude review+validation stages are the gate; Codex is addressed if present but never required), runs the full-suite gate per the testing-cadence policy, squash-merges to main, applies the version bump, reconciles the parent epic (and triggers its integration-acceptance pass when the last child lands), closes the ticket, sets the board Status, and invokes gh-clean. Use when a Validated PR is ready to land, or when gh-lead / the sweeper delegates a merge. This is the ONLY role that merges.
+description: Merge Validated pull requests to main — the pipeline's single, tightly-guarded merger. Plans a collision-aware merge order across all open Validated PRs, re-confirms the review gate and CI at merge time (the Claude review+validation stages are the gate; a completed review of the PR's current head SHA is required, so absence of a review blocks rather than passes; Codex is addressed if present but never required), runs the full-suite gate per the testing-cadence policy, squash-merges to main, applies the version bump, reconciles the parent epic (and triggers its integration-acceptance pass when the last child lands), closes the ticket, sets the board Status, and invokes gh-clean. Use when a Validated PR is ready to land, or when gh-lead / the sweeper delegates a merge. This is the ONLY role that merges.
 ---
 
 # GH Merge
@@ -56,6 +56,11 @@ restating its marker, fields, discovery rules, or writer policy here.
   status that was green at review time can be stale now. Re-query the live PR state right
   before the merge button. (Codex is **not** a merge gate — CONVENTIONS.md §8; a missing,
   pending, or unresolved Codex review never blocks the merge.)
+- **An empty finding list is not a clean review.** Requiring a *completed* review of the PR's
+  current head SHA is a hard, fail-closed gate: `## Step 3 — Confirm the review gate at merge
+  time` states that requirement and its refusal exactly once (Step 3.1, the sole enforcement
+  point named in CONVENTIONS.md §8), and it is about the **Claude** review stage's own
+  completion — never a reinstated Codex gate.
 - **Prefer surfacing a stuck gate to the operator over merging on a proxy.** If CI is stuck,
   or a D7 gate is unsigned — **stop and surface it to the operator.** Do not merge to keep
   the pipeline moving. "CI was green earlier" is not "CI is green now." A pending or absent
@@ -189,17 +194,81 @@ PR still valid after the ones before it land.
 
 The required review gate is the **Claude review+validation stages**, not Codex
 (CONVENTIONS.md §8, the 2026-07-15 de-gating) — do not restate §8 here. The merge
-review-gate precondition is simply: **the PR reached `Validated` via those stages.**
+review-gate precondition has **two** halves and both are checked here: the PR carries
+**positive evidence that the code you are about to land was actually reviewed** (Step 3.1),
+and that review's findings are clean/addressed, i.e. genuinely `Validated` (Step 3.2).
+
+### Step 3.1 — Require a completed review of the PR's *current* head SHA
+
+`Validated` plus "no unresolved `[change-requested]` threads" is **necessary but not
+sufficient**. A PR that was never reviewed also has zero threads, so on its own that count
+reads *identically* to reviewed-and-clean and the gate passes **vacuously**. Demand the
+positive artifact instead.
+
+**Reuse the review stage's own head-SHA artifact — do not invent a second mechanism.** This
+is the same lookup `gh-review` already performs for its routine idempotency guard ("a review
+comment for this exact head SHA has already been posted"), which is precisely why that stage
+is required to **state the head SHA it reviewed**. One `gh pr view` plus one API read:
+
+```sh
+gh pr view <pr> --json headRefOid --jq .headRefOid          # the CURRENT head SHA about to land
+gh api repos/<repo>/pulls/<pr>/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>")
+        | {submitted_at, commit_id, body}'                  # what the review stage reviewed
+```
+
+A review counts as **completed for this head SHA** only when it is the review stage's own
+COMMENT-event review (`<automation-login>`, §8's 422 recipe — not a `gh-validate` verdict and
+not the `<codex-reviewer>`) **and** its `commit_id` equals `headRefOid`, corroborated by the
+head SHA its body states.
+
+**Refusal condition — stated in this one place.** If **no** review-stage review names the
+PR's current head SHA, the PR is **unreviewed**: do not merge it. **Absence of a review is a
+block, not a pass.** The refusal is fail-closed and covers everything downstream — for that
+head SHA, run **no** Step 4 D7 gate, **no** `<full-suite>`, **no** `<version-file>` edit, and
+**no `gh pr merge`**. The match is on the *current* head SHA, so a review of an earlier commit
+does not carry — any push, or a Step 2.4 rebase, invalidates the prior pass and the PR needs a
+fresh one.
+
+**One check, three absence-causes.** A review that never started, one still **queued or
+running**, and one whose run **failed** all produce the same observable from here: no
+review-stage review names this head SHA. The routine's internal execution state is not visible
+in GitHub artifacts and you do not need it — the single check above already covers all three.
+Only the **disposition** differs:
+
+| Observation (no review-stage review names the current head SHA) | Disposition |
+|---|---|
+| The head SHA is younger than the review stage's observed latency (**7–16 min**), or a review exists for an **earlier** SHA on this PR | A run is **in flight → wait and re-poll.** Never merge into a running review — that is exactly the #1150 race. |
+| Still absent well past that window, or a re-poll window elapsed with nothing new posted | The run **never started or failed → stop and surface.** A failed run is **silent**: nothing alerts on it, so it must be re-triggered explicitly (#1118 was recovered only because the operator noticed). Kick the PR back to `Awaiting Review`. |
+
+**Fail loud and specific** — name the missing review, the head SHA it is missing for, and the
+disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage review names
+head SHA `<sha>` — the PR is unreviewed. Opened 8m ago, inside the 7–16 min review latency
+window → a review run is in flight; waiting and re-polling rather than racing it."*
+
+**This is the Claude review stage's own completion — it is NOT a reinstated Codex gate.**
+Step 3.1 asks only whether *the required Claude review* ran against this head SHA. It never
+consults, waits for, or requires `<codex-reviewer>`; the de-gating in Step 3.3 is untouched.
+
+**Epic integration squashes need this most.** An epic branch's integration merge to `main`
+receives **zero CI check-runs**, so a green-CI signal cannot stand in as a second opinion, and
+its composed diff was never reviewed as a whole even when every child was. Step 3.1 is the
+only thing standing between an unreviewed epic squash and `main`.
+
+### Step 3.2 — Confirm the review's findings are clean (`Validated`)
 
 - **Confirm the PR is genuinely `Validated`.** gh-review's own findings are clean/addressed
   and gh-validate's behavioral pass succeeded. Re-confirm the board Status is still
   `Validated` and that no **new** required-change (`[change-requested]` / BLOCKING) finding
   was posted after it — a new one kicks the PR back to `Reviewed` (Step 2.4), not merge. This
   is the gate, and it is **independent of Codex**.
+
+### Step 3.3 — Codex is never re-checked and never waited on
+
 - **Do NOT re-check or wait on Codex as a gate.** A Codex review that is **pending, absent, or
   never posted must NOT block the merge** (§8) — do not treat "zero unresolved Codex threads"
   as a merge precondition, and do not surface a missing or pending Codex review as a stuck
-  gate.
+  gate. Step 3.1 does not change this: a missing Codex review is still not a missing review.
 - **Address a present Codex review if it has actionable findings — not required, never
   blocking.** If a Codex review **has** posted `[change-requested]` threads that were never
   worked, treat them as ordinary review findings and route them through the `gh-fixer` loop
@@ -437,10 +506,16 @@ gh pr diff 901 --name-only     # -> includes src/server/config_loader.py
 gh pr diff 902 --name-only     # -> includes src/server/config_loader.py  => OVERLAP => serialize
 
 # ============ PR #901 (first: smaller blast, owns the snapshot) ============
-# Step 3 confirm the review gate at merge time (CONVENTIONS.md §8): the PR reached Validated
+# Step 3.1 REQUIRE a completed review of the CURRENT head SHA (absence blocks, never passes):
+gh pr view 901 --json headRefOid --jq .headRefOid         # -> the SHA about to land
+gh api repos/<repo>/pulls/901/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
+#   -> a review-stage review with commit_id == that SHA MUST exist, else STOP (Step 3.1):
+#      in-flight (inside the 7-16 min window) -> wait and re-poll; absent past it -> surface.
+# Step 3.2 confirm the review gate at merge time (CONVENTIONS.md §8): the PR reached Validated
 #   via the Claude review+validation stages — THAT is the gate, independent of Codex:
 gh pr view 901 --json reviewDecision,statusCheckRollup   # still Validated (Claude stages) + CI green
-#   Codex is NOT re-checked as a gate: a missing/pending/unresolved Codex review does NOT block.
+#   Step 3.3 Codex is NOT re-checked as a gate: a missing/pending/unresolved Codex review does NOT block.
 #   (ONLY if a Codex review already posted actionable [change-requested] threads, route them
 #    through gh-fixer first — never merge over an unaddressed required finding; else proceed.)
 # Step 4 D7 (CONVENTIONS.md §7d): #901 touches no live-order/.env/track-5 surface -> no human gate
@@ -469,8 +544,13 @@ git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py 
 #   resolve conflicts; re-run TARGETED tests only (not full suite yet):
 #   pytest -q tests/test_config_validation.py
 #   if the rebase materially changed #902's diff -> kick back to Reviewed (do NOT merge stale)
-# Step 3 confirm the review gate again after the rebase (still Validated + CI green; Codex is
-#   NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
+# Step 3.1 the rebase MOVED the head SHA, so the prior review no longer names it — re-check,
+#   and do NOT merge until a review-stage review names the NEW head SHA (absence blocks):
+gh pr view 902 --json headRefOid --jq .headRefOid         # -> the POST-rebase SHA
+gh api repos/<repo>/pulls/902/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
+# Step 3.2 confirm the review gate again after the rebase (still Validated + CI green; Step 3.3
+#   Codex is NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
 gh pr view 902 --json reviewDecision,statusCheckRollup
 # Step 4 D7: #902 touches no high-risk surface -> no human gate
 # Step 5.0/5.1/5.2 the rebase above already put the MERGED tree in the worktree; gate it (not clean main):
@@ -491,10 +571,12 @@ gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board
 
 **Dry-run verdict (what it prints, having executed nothing):** order = **#901 then #902**;
 reason = real `config_loader.py` overlap + dual snapshot regeneration force serialize, #901
-first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both are
-confirmed still `Validated` via the Claude review+validation stages (no Codex posted, and none
-required — §8) and neither trips the D7 surface gate; two `main`-boundary full-suite runs (one
-per merge, not one shared); two **serial** patch bumps.
+first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both carry a
+completed review-stage review of their **current** head SHA (Step 3.1 — #902's is re-checked
+after the rebase moved its SHA) and are confirmed still `Validated` via the Claude
+review+validation stages (no Codex posted, and none required — §8); neither trips the D7
+surface gate; two `main`-boundary full-suite runs (one per merge, not one shared); two
+**serial** patch bumps.
 No `gh pr merge` (or any mutating command) is executed in a dry run — it stops here with the
 plan above for the operator to approve.
 
@@ -552,3 +634,85 @@ cd <merge-worktree> && git checkout -b gh-merge-sess-A-0001
 at Step 0.3 with a specific, actionable surface and mutates nothing; only the recorded
 owner's token proceeds into *Prepare*. Who the owner is changes solely through the operator
 or the §12 transfer protocol — never by a self-service override inside gh-merge.
+
+## Worked example — Step 3.1 unreviewed-head-SHA refusal (the #1150 regression fixture)
+
+**Purpose:** replay the incident that produced the Step 3.1 requirement as an *exact command
+list* that **stops inside Step 3**, plus the healthy-path positive controls that must still
+merge. Like the two examples above this executes nothing; it shows precisely where the
+sequence halts and what never runs. The fixture is real: PR **#1150** (the epic #935 live-kill
+path) merged **8 minutes** after opening, mid-review — at that instant it had **zero** review
+threads, so the old "no unresolved `[change-requested]` threads" gate read *clean*. All nine
+findings (two P1s on the live kill path) landed **after** the merge and stayed unresolved.
+
+**Fixture — three `Validated` PRs, all at the merge button, `<automation-login>` review stage:**
+
+| PR | Head SHA | Review-stage review naming that SHA | Age of head SHA | Threads at merge time |
+|---|---|---|---|---|
+| #1150 | `abc1150` | **none** (run fired on time, still executing) | **8 min** | 0 — *vacuously* clean |
+| #1149 | `def1149` | yes — `commit_id == def1149`, posted at +6m45s | 1h54m | 7 posted, **0 unresolved** |
+| #1144 | `fed1144` | yes — `commit_id == fed1144` | 3h+ | 22 posted, **0 unresolved** |
+
+No `<codex-reviewer>` review has posted on **any** of the three. Under §8 that is expected and
+irrelevant — Codex is not consulted below, in either direction.
+
+### Case 1 — #1150: merge attempted 8 minutes after open, review in flight → REFUSED
+
+```sh
+# Step 3.1 read the CURRENT head SHA about to land:
+gh pr view 1150 --json headRefOid --jq .headRefOid          # -> abc1150
+# Step 3.1 read what the review stage says it reviewed (same lookup gh-review's guard uses):
+gh api repos/<repo>/pulls/1150/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {submitted_at, commit_id, body}'
+#   -> []   NO review-stage review names abc1150 (nor any earlier SHA on this PR)
+# Step 3.1 refusal condition: absence of a completed review is a BLOCK, not a pass.
+#   >>> STOP HERE. No Step 4 D7. No `<full-suite>`. No `<version-file>` edit. No `gh pr merge`. <<<
+# Step 3.1 disposition: head SHA is 8 min old -> INSIDE the 7-16 min review latency window
+#   => a run is IN FLIGHT => WAIT and re-poll; do not race it.
+#   Surface (fail loud + specific):
+#   "Holding #1150: no completed review-stage review names head SHA abc1150 — the PR is
+#    unreviewed. Head SHA is 8m old, inside the 7-16 min review latency window, so a review
+#    run is in flight; waiting and re-polling rather than merging into it."
+# --- re-poll after the window ---
+gh api repos/<repo>/pulls/1150/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
+#   -> commit_id == abc1150, body states "reviewed head SHA abc1150", 3 x [change-requested]
+# Step 3.2 the review is now COMPLETE but its findings are NOT clean
+#   => kick back to `Reviewed` for the gh-fixer loop (Step 2.4). Still no merge.
+```
+
+**What did NOT run:** no Step 4 D7 check, no Step 5.0 merged-tree materialization, no
+`<fast-gates>`/`<full-suite>`, no Step 6 version bump, no `gh pr merge`, no Step 7 epic
+reconcile, no Step 8 close. The 8-minute merge is unreachable. Note that CI could not have
+saved this either: #1150 was an **epic integration squash**, which receives **zero** CI
+check-runs — Step 3.1 was the only available signal.
+
+**Counter-case — the silent failed run.** Change one fact: the review run for `abc1150`
+**failed** instead of running long (as it did for #1118). The observation at Step 3.1 is
+*identical* — no review names `abc1150` — so the same single check refuses, with no separate
+failure-detection instrumentation. Only the disposition differs: past the latency window
+nothing will ever post, so **stop and surface** for an explicit re-trigger and kick the PR
+back to `Awaiting Review`. A failed run raises no alert on its own; #1118 was recovered only
+because the operator happened to notice.
+
+### Case 2 — #1149 and #1144: reviewed, clean → the healthy path still merges
+
+```sh
+# ---- #1149 ----
+gh pr view 1149 --json headRefOid --jq .headRefOid          # -> def1149
+gh api repos/<repo>/pulls/1149/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
+#   -> commit_id == def1149  => completed review for the CURRENT head SHA => Step 3.1 PASSES
+# Step 3.2 board Status still Validated; 7 threads posted, 0 unresolved [change-requested]
+# Step 3.3 no Codex review posted -> NOT consulted, NOT waited on, NOT a gate (§8)
+#   => proceed to Step 4 D7, then Steps 5-8 exactly as the DRY RUN example above.
+# ---- #1144 ---- identical shape: commit_id == fed1144, 22 threads, 0 unresolved => PASSES
+```
+
+**Verdict:** Step 3.1 refuses **only** the PR whose current head SHA has no completed review —
+it is a pure addition of positive evidence, so both healthy PRs (#1149, #1144) land exactly as
+before and no existing gate is relaxed to accommodate it. Never-run, in-flight, and failed
+collapse into the one observation "no review-stage review names this head SHA"; only the
+wait-vs-surface disposition differs. Codex posted on none of the three and was consulted for
+none of them — Step 3.1 gates the **Claude** review stage's own completion and is **not** a
+reinstated Codex gate.
