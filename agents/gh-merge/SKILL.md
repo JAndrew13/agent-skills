@@ -830,11 +830,14 @@ findings (two P1s on the live kill path) landed **after** the merge and stayed u
 
 **Fixture — three `Validated` PRs, all at the merge button, `<automation-login>` review stage:**
 
-| PR | Head SHA | Review-stage review naming that SHA | Age of head SHA | Threads at merge time |
+The pass/refuse column is the **verdict-summary body** — `commit_id` appears only as the
+corroborating field it is (Step 3.1 criterion 2), never as the reason a row passes.
+
+| PR | Head SHA | Review-stage **verdict-summary body** naming that SHA | Age of head SHA | Threads at merge time |
 |---|---|---|---|---|
-| #1150 | `abc1150` | **none** (run fired on time, still executing) | **8 min** | 0 — *vacuously* clean |
-| #1149 | `def1149` | yes — `commit_id == def1149`, posted at +6m45s | 1h54m | 7 posted, **0 unresolved** |
-| #1144 | `fed1144` | yes — `commit_id == fed1144` | 3h+ | 22 posted, **0 unresolved** |
+| #1150 | `abc1150` | **none** — no non-empty body names it (run fired on time, still executing) | **8 min** | 0 — *vacuously* clean |
+| #1149 | `def1149` | **yes** — body *"…reviewed head SHA def1149…"*, posted at +6m45s (`commit_id == def1149` corroborates) | 1h54m | 7 posted, **0 unresolved** |
+| #1144 | `fed1144` | **yes** — body names `fed1144` (`commit_id == fed1144` corroborates) | 3h+ | 22 posted, **0 unresolved** |
 
 No `<codex-reviewer>` review has posted on **any** of the three. Under §8 that is expected and
 irrelevant — Codex is not consulted below, in either direction.
@@ -846,7 +849,8 @@ irrelevant — Codex is not consulted below, in either direction.
 gh pr view 1150 --json headRefOid --jq .headRefOid          # -> abc1150
 # Step 3.1 read what the review stage says it reviewed (same lookup gh-review's guard uses):
 gh api repos/<repo>/pulls/1150/reviews --paginate \
-  --jq '.[] | select(.user.login=="<automation-login>") | {submitted_at, commit_id, body}'
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "")
+        | {submitted_at, commit_id, body}'
 #   -> []   NO review-stage verdict summary names abc1150 (nor any earlier SHA on this PR)
 # Step 3.1 refusal condition: absence of a completed review is a BLOCK, not a pass.
 #   >>> STOP HERE. No Step 4 D7. No `<full-suite>`. No `<version-file>` edit. No `gh pr merge`. <<<
@@ -858,8 +862,9 @@ gh api repos/<repo>/pulls/1150/reviews --paginate \
 #    run is in flight; waiting and re-polling rather than merging into it."
 # --- re-poll after the window ---
 gh api repos/<repo>/pulls/1150/reviews --paginate \
-  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
-#   -> commit_id == abc1150, body states "reviewed head SHA abc1150", 3 x [change-requested]
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
+#   -> a non-empty body now states "reviewed head SHA abc1150" (commit_id == abc1150
+#      corroborates), carrying 3 x [change-requested]
 # Step 3.2 the review is now COMPLETE but its findings are NOT clean
 #   => kick back to `Reviewed` for the gh-fixer loop (Step 2.4). Still no merge.
 ```
@@ -896,6 +901,8 @@ can tell them apart from a real verdict. This is the ordinary path, not an edge 
 fix round re-creates it. Only the body filter refuses it.
 
 ```sh
+# DELIBERATELY UNFILTERED — this one lookup omits `select(.body != "")` to SHOW what the
+# discriminator rejects. Every lookup gh-merge actually performs carries the filter.
 gh api repos/<repo>/pulls/1150/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, state, body_len: (.body|length)}'
 #   -> {ghi1150, "COMMENTED", 0}   x N   <- gh-fixer's in-thread replies, NOT a review
@@ -917,12 +924,16 @@ because the operator happened to notice.
 # ---- #1149 ----
 gh pr view 1149 --json headRefOid --jq .headRefOid          # -> def1149
 gh api repos/<repo>/pulls/1149/reviews --paginate \
-  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
-#   -> commit_id == def1149  => completed review for the CURRENT head SHA => Step 3.1 PASSES
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
+#   -> ONE object survives the body filter: body "Re-reviewed head SHA def1149 ..." (non-empty,
+#      names the CURRENT head SHA) => a COMPLETED VERDICT SUMMARY exists => Step 3.1 PASSES.
+#      commit_id == def1149 only CORROBORATES (criterion 2); it is not why this passes.
+#      Strip the body and the same lookup returns [] => REFUSED, which is the #1179 phantom shape.
 # Step 3.2 board Status still Validated; 7 threads posted, 0 unresolved [change-requested]
 # Step 3.3 no Codex review posted -> NOT consulted, NOT waited on, NOT a gate (§8)
 #   => proceed to Step 4 D7, then Steps 5-8 exactly as the DRY RUN example above.
-# ---- #1144 ---- identical shape: commit_id == fed1144, 22 threads, 0 unresolved => PASSES
+# ---- #1144 ---- identical shape: a non-empty verdict-summary body names fed1144 (commit_id ==
+#   fed1144 corroborates), 22 threads, 0 unresolved => PASSES
 ```
 
 **Verdict:** Step 3.1 refuses **only** the PR whose current head SHA has no completed review —

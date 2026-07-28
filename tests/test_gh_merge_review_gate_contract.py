@@ -801,3 +801,64 @@ def test_headrefoid_is_documented_as_a_remote_read() -> None:
     # And the stale characterisation must be gone.
     assert "post-rebase sha" not in lowered
     assert "the current remote head" in lowered
+
+
+def test_positive_control_passes_on_the_body_not_on_commit_id_alone() -> None:
+    """The healthy-path fixture must model the criterion F2 kept, not the one it demoted.
+
+    Step 3.1 makes the non-empty verdict-summary body the PRIMARY criterion and demotes
+    ``commit_id`` to "corroborating, not sufficient on its own". But the worked example's
+    positive control still concluded ``Step 3.1 PASSES`` from ``commit_id == def1149`` and
+    nothing else, and the fixture table's pass column held only ``commit_id`` values. An
+    agent copying that case passes a PR on ``commit_id`` -- which is exactly the #1179
+    phantom vector, since those empty-bodied objects carry ``commit_id == <head>`` too.
+    """
+    example = _worked_example(_read(_MERGE))
+    lowered = " ".join(example.lower().split())
+
+    # (a) The table's pass column is the body; commit_id is labelled as corroboration.
+    assert "review-stage **verdict-summary body** naming that sha" in lowered
+    assert "`commit_id` appears only as the corroborating field it is" in lowered
+    assert lowered.count("corroborates") >= 2
+
+    # (b) The positive control passes BECAUSE of the body, and says commit_id is not why.
+    assert "a completed verdict summary exists => step 3.1 passes" in lowered
+    assert "only corroborates (criterion 2); it is not why this passes" in lowered
+    # (c) ...and it states what happens when the body is removed -- the phantom shape.
+    assert "strip the body and the same lookup returns [] => refused" in lowered
+    assert "which is the #1179 phantom shape" in lowered
+
+
+def test_every_operative_reviews_lookup_carries_the_body_filter() -> None:
+    """Mechanical half of F2 round 2: 5 of 8 instantiated lookups omitted the filter.
+
+    Step 3.1's canonical lookup carries ``select(.body != "")``, but the DRY-RUN sites and
+    the #1150 fixture's lookups mostly did not -- so the worked examples, which are what an
+    agent actually copies, taught the superseded ``commit_id``/login-only criterion. Every
+    lookup in the file must carry the filter, with exactly ONE documented exception: the
+    counter-case that deliberately omits it to SHOW what the filter rejects.
+    """
+    merge = _read(_MERGE)
+    lines = merge.splitlines()
+    login = 'select(.user.login=="<automation-login>")'
+
+    hits = [i for i, line in enumerate(lines) if login in line]
+    assert len(hits) >= 8, f"expected the full set of review lookups, found {len(hits)}"
+
+    missing: list[int] = []
+    for i in hits:
+        # The filter may wrap onto the following line of the same jq program.
+        window = " ".join(lines[i : i + 2])
+        if 'select(.body != "")' not in window:
+            missing.append(i)
+
+    assert len(missing) == 1, (
+        "exactly one lookup may omit the body filter (the demonstration counter-case); "
+        f"unfiltered lookups at lines {[i + 1 for i in missing]}"
+    )
+    # ...and that one must be labelled as deliberate, immediately above it.
+    preamble = " ".join(lines[max(0, missing[0] - 3) : missing[0]]).lower()
+    assert "deliberately unfiltered" in preamble, (
+        "the one unfiltered lookup must be explicitly marked as a demonstration"
+    )
+    assert "every lookup gh-merge actually performs carries the filter" in preamble
