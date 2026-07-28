@@ -208,21 +208,42 @@ positive artifact instead.
 **Reuse the review stage's own head-SHA artifact — do not invent a second mechanism.** This
 is the same lookup `gh-review` already performs for its routine idempotency guard ("a review
 comment for this exact head SHA has already been posted"), which is precisely why that stage
-is required to **state the head SHA it reviewed**. One `gh pr view` plus one API read:
+is required to **state the head SHA it reviewed** — `routines/gh-review.routine.md` step 4,
+the writer-side obligation this gate consumes. One `gh pr view` plus one API read:
 
 ```sh
 gh pr view <pr> --json headRefOid --jq .headRefOid          # the CURRENT head SHA about to land
 gh api repos/<repo>/pulls/<pr>/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>")
+        | select(.body != "")                               # the VERDICT SUMMARY, not a bare inline comment
         | {submitted_at, commit_id, body}'                  # what the review stage reviewed
 ```
 
-A review counts as **completed for this head SHA** only when it is the review stage's own
-COMMENT-event review (`<automation-login>`, §8's 422 recipe — not a `gh-validate` verdict and
-not the `<codex-reviewer>`) **and** its `commit_id` equals `headRefOid`, corroborated by the
-head SHA its body states.
+**What counts as *completed* — the verdict-summary body, not any review object.** A review
+counts as completed for this head SHA only when **all** of the following hold:
 
-**Refusal condition — stated in this one place.** If **no** review-stage review names the
+1. **It is a terminal verdict summary**: a review object from `<automation-login>` carrying a
+   **non-empty top-level body** that **names this head SHA**. This is the primary criterion.
+   `routines/gh-review.routine.md` step 4 mandates exactly this artifact ("A top-level body is
+   only for the overall verdict summary. State the head SHA you reviewed."), and it is the
+   *last* thing the review stage emits — which is what makes it evidence of **completion**.
+2. Its `commit_id` equals `headRefOid` — **corroborating**, not sufficient on its own.
+3. It is the review stage's own COMMENT-event review (§8's 422 recipe) — not a `gh-validate`
+   verdict and not the `<codex-reviewer>`.
+
+**Bare inline-comment review objects do NOT count, however many there are.** §8's 422 recipe
+permits posting findings as N sequential `POST /repos/<repo>/pulls/<n>/comments` calls, each
+carrying `{commit_id, path, line}`; where that path creates a review object per comment, each
+one has an **empty body** and a matching `commit_id`. Counting those as "completed" would let
+the **first** inline comment of an in-progress review satisfy this gate while the blocking
+`[change-requested]` finding is still unposted — #1150's vacuous-clean reproduced at ~1 minute
+instead of 8 (its own nine findings posted across a 48-second spread). The non-empty
+verdict-summary body is the **only** artifact that distinguishes a finished review from a
+partial one, so it — not `commit_id` — is what this gate matches on. Symmetrically, a review
+posted **only** as inline comments with no verdict summary is **not** a completed review: that
+is a review-stage contract violation, and the disposition is *stop and surface*, not merge.
+
+**Refusal condition — stated in this one place.** If **no** review-stage verdict summary names the
 PR's current head SHA, the PR is **unreviewed**: do not merge it. **Absence of a review is a
 block, not a pass.** The refusal is fail-closed and covers everything downstream — for that
 head SHA, run **no** Step 4 D7 gate, **no** `<full-suite>`, **no** `<version-file>` edit, and
@@ -243,17 +264,17 @@ re-enters Step 3.1 for the **new** SHA — a fresh review, a fresh full-suite ru
 
 **One check, three absence-causes.** A review that never started, one still **queued or
 running**, and one whose run **failed** all produce the same observable from here: no
-review-stage review names this head SHA. The routine's internal execution state is not visible
+review-stage verdict summary names this head SHA. The routine's internal execution state is not visible
 in GitHub artifacts and you do not need it — the single check above already covers all three.
 Only the **disposition** differs:
 
-| Observation (no review-stage review names the current head SHA) | Disposition |
+| Observation (no review-stage verdict summary names the current head SHA) | Disposition |
 |---|---|
 | The head SHA is younger than the review stage's observed latency (**7–16 min**), or a review exists for an **earlier** SHA on this PR | A run is **in flight → wait and re-poll.** Never merge into a running review — that is exactly the #1150 race. |
 | Still absent well past that window, or a re-poll window elapsed with nothing new posted | The run **never started or failed → stop and surface.** A failed run is **silent**: nothing alerts on it, so it must be re-triggered explicitly (#1118 was recovered only because the operator noticed). Kick the PR back to `Awaiting Review`. |
 
 **Fail loud and specific** — name the missing review, the head SHA it is missing for, and the
-disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage review names
+disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage verdict summary names
 head SHA `<sha>` — the PR is unreviewed. Opened 8m ago, inside the 7–16 min review latency
 window → a review run is in flight; waiting and re-polling rather than racing it."*
 
@@ -586,7 +607,7 @@ git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py 
 #   pytest -q tests/test_config_validation.py
 #   if the rebase materially changed #902's diff -> kick back to Reviewed (do NOT merge stale)
 # Step 3.1 the rebase MOVED the head SHA, so the prior review no longer names it — re-check,
-#   and do NOT merge until a review-stage review names the NEW head SHA (absence blocks):
+#   and do NOT merge until a review-stage verdict summary names the NEW head SHA (absence blocks):
 SHA902=$(gh pr view 902 --json headRefOid --jq .headRefOid)   # -> CAPTURE the POST-rebase SHA
 gh api repos/<repo>/pulls/902/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
@@ -616,7 +637,7 @@ gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board
 **Dry-run verdict (what it prints, having executed nothing):** order = **#901 then #902**;
 reason = real `config_loader.py` overlap + dual snapshot regeneration force serialize, #901
 first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both carry a
-completed review-stage review of their **current** head SHA (Step 3.1 — #902's is re-checked
+completed review-stage verdict summary naming their **current** head SHA (Step 3.1 — #902's is re-checked
 after the rebase moved its SHA) and are confirmed still `Validated` via the Claude
 review+validation stages (no Codex posted, and none required — §8); neither trips the D7
 surface gate; two `main`-boundary full-suite runs (one per merge, not one shared); two
@@ -708,13 +729,13 @@ gh pr view 1150 --json headRefOid --jq .headRefOid          # -> abc1150
 # Step 3.1 read what the review stage says it reviewed (same lookup gh-review's guard uses):
 gh api repos/<repo>/pulls/1150/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | {submitted_at, commit_id, body}'
-#   -> []   NO review-stage review names abc1150 (nor any earlier SHA on this PR)
+#   -> []   NO review-stage verdict summary names abc1150 (nor any earlier SHA on this PR)
 # Step 3.1 refusal condition: absence of a completed review is a BLOCK, not a pass.
 #   >>> STOP HERE. No Step 4 D7. No `<full-suite>`. No `<version-file>` edit. No `gh pr merge`. <<<
 # Step 3.1 disposition: head SHA is 8 min old -> INSIDE the 7-16 min review latency window
 #   => a run is IN FLIGHT => WAIT and re-poll; do not race it.
 #   Surface (fail loud + specific):
-#   "Holding #1150: no completed review-stage review names head SHA abc1150 — the PR is
+#   "Holding #1150: no completed review-stage verdict summary names head SHA abc1150 — the PR is
 #    unreviewed. Head SHA is 8m old, inside the 7-16 min review latency window, so a review
 #    run is in flight; waiting and re-polling rather than merging into it."
 # --- re-poll after the window ---
@@ -730,6 +751,22 @@ gh api repos/<repo>/pulls/1150/reviews --paginate \
 reconcile, no Step 8 close. The 8-minute merge is unreachable. Note that CI could not have
 saved this either: #1150 was an **epic integration squash**, which receives **zero** CI
 check-runs — Step 3.1 was the only available signal.
+
+**Counter-case — the partial review (bare inline comments, no verdict summary).** Change a
+different fact: at minute 1 the review stage has posted its **first** inline finding via §8's
+sequential `POST .../pulls/1150/comments` path, so a review object now exists with
+`commit_id == abc1150` — and an **empty body**. A `commit_id`-only match would call that
+"completed" and merge at **minute 1**, with the blocking `[change-requested]` finding still
+unposted; #1150's own nine findings spread over 48 seconds, so this window is real. Step 3.1
+matches on the **verdict-summary body** instead, so the observation is unchanged — no
+non-empty body names `abc1150` — and the refusal stands until the terminal summary posts.
+
+```sh
+gh api repos/<repo>/pulls/1150/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
+#   -> []   inline-comment review objects exist, but NO verdict summary => still unreviewed
+#   >>> STOP HERE. Same refusal, same disposition (in flight -> wait and re-poll). <<<
+```
 
 **Counter-case — the silent failed run.** Change one fact: the review run for `abc1150`
 **failed** instead of running long (as it did for #1118). The observation at Step 3.1 is
@@ -756,7 +793,7 @@ gh api repos/<repo>/pulls/1149/reviews --paginate \
 **Verdict:** Step 3.1 refuses **only** the PR whose current head SHA has no completed review —
 it is a pure addition of positive evidence, so both healthy PRs (#1149, #1144) land exactly as
 before and no existing gate is relaxed to accommodate it. Never-run, in-flight, and failed
-collapse into the one observation "no review-stage review names this head SHA"; only the
+collapse into the one observation "no review-stage verdict summary names this head SHA"; only the
 wait-vs-surface disposition differs. Codex posted on none of the three and was consulted for
 none of them — Step 3.1 gates the **Claude** review stage's own completion and is **not** a
 reinstated Codex gate.

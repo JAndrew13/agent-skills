@@ -42,7 +42,7 @@ _CONVENTIONS = _AGENTS / "gh-workflow" / "CONVENTIONS.md"
 # of the substring it counts (the marker-splitting technique used across the ledger
 # tests). Unlike the requirement *statement* -- which §8 is supposed to state -- the
 # mechanic must live in exactly one place: gh-merge Step 3.1.
-_REFUSAL_MECHANIC = "review-stage review names " + "the PR's current head SHA"
+_REFUSAL_MECHANIC = "review-stage verdict summary names " + "the PR's current head SHA"
 
 # The head-SHA lookup, reused from gh-review's routine idempotency guard rather than
 # invented a second time.
@@ -111,6 +111,37 @@ def test_step3_requires_a_completed_review_of_the_current_head_sha() -> None:
     # The refusal is a real stop: nothing downstream runs.
     assert "do not merge it" in lowered
     assert "no `gh pr merge`" in step3.lower()
+
+
+def test_completed_means_the_verdict_summary_body_not_any_review_object() -> None:
+    """*Completed* is the terminal verdict summary, not a bare inline-comment object (F2).
+
+    §8's 422 recipe permits N sequential ``POST .../pulls/<n>/comments`` calls. Where that
+    path creates a review object per comment, each carries ``commit_id == headRefOid`` and
+    an EMPTY body -- so a ``commit_id``-only criterion lets the FIRST inline comment of an
+    in-progress review satisfy the gate while the blocking finding is still unposted:
+    #1150's vacuous-clean at ~1 minute instead of 8. The non-empty top-level body is the
+    only artifact that separates a finished review from a partial one.
+    """
+    step3 = _flat(_step3_section(_read(_MERGE)))
+    lowered = step3.lower()
+
+    # The primary criterion is the verdict-summary BODY naming this head SHA.
+    assert "verdict summary" in lowered
+    assert "non-empty top-level body" in lowered
+    assert "this is the primary criterion" in lowered
+    # ...and commit_id is explicitly demoted to corroboration.
+    assert "corroborating" in lowered and "not sufficient on its own" in lowered
+
+    # Bare inline-comment review objects are explicitly excluded.
+    assert "bare inline-comment review objects do not count" in lowered
+    assert "empty body" in lowered
+    # The lookup itself filters to non-empty bodies -- the criterion is mechanical, not prose.
+    assert 'select(.body != "")' in step3
+
+    # The false-negative half of the ambiguity is closed too: inline-only, no summary =>
+    # surface a contract violation, never merge.
+    assert "is **not** a completed review" in step3 or "not a completed review" in lowered
 
 
 def test_step3_names_the_lookup_and_reuses_gh_reviews_head_sha_precedent() -> None:
