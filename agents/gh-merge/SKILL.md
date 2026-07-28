@@ -276,8 +276,10 @@ PR's current head SHA, the PR is **unreviewed**: do not merge it. **Absence of a
 block, not a pass.** The refusal is fail-closed and covers everything downstream — for that
 head SHA, run **no** Step 4 D7 gate, **no** `<full-suite>`, **no** `<version-file>` edit, and
 **no `gh pr merge`**. The match is on the *current* head SHA, so a review of an earlier commit
-does not carry — any push, or a Step 2.4 rebase, invalidates the prior pass and the PR needs a
-fresh one.
+does not carry — any push, or a **published** Step 2.4 rebase, invalidates the prior pass and
+the PR needs a fresh one. Step 5.0's own rebase is the one thing that does **not** invalidate
+it: gh-merge keeps that rebase local and never pushes it (Step 5.3), so the PR's head SHA is
+unmoved by it and the pass you took here still names the head you will merge.
 
 **Carry the validated SHA forward to the merge — never re-read it.** Record the `headRefOid`
 you validated here as **`<reviewed-sha>`** and pass that literal value to `gh pr merge`'s
@@ -372,13 +374,29 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    git fetch origin
    git checkout -B gh-merge-<session> origin/main   # or origin/<epic-branch> for a child
    gh pr checkout <pr>            # OR: git merge --no-ff origin/<pr-head-branch>
-   git rebase origin/main         # if you checked the branch out, land it on the current base
+   [ "$(git rev-parse HEAD)" = "<reviewed-sha>" ] || exit 1   # what you checked out IS what
+                                                             # Step 3.1 validated -> else STOP
+   git rebase origin/main         # LOCAL TEST TREE ONLY — never pushed (see Step 5.3)
    ```
 
    Equivalently, run the gates against the **PR head after it has been rebased onto the current
-   base** — the point is the tree you test is byte-for-byte what the squash will ship. If the
-   rebase/merge conflicts or materially changes the diff, kick the PR back to `Reviewed`
-   (Step 2.4) rather than merge on stale approval.
+   base** — the point is the tree you test is byte-for-byte what the squash will ship.
+
+   **The checkout assertion is the first of two foreign-commit catches.** If someone pushed to
+   the PR head between Step 3.1's `headRefOid` read and this checkout, the checked-out tip is
+   *their* commit rather than `<reviewed-sha>`, and the procedure stops here — before gating,
+   bumping, or merging code no reviewer saw. (The second catch is Step 5.3's plain,
+   non-`--force` push.)
+
+   **This rebase is a throwaway test artifact — gh-merge never publishes it.** Its only job is
+   to make the tree you gate byte-for-byte what the squash ships; `gh pr merge --squash`
+   re-derives that tree server-side from the PR's own commits, so the rebased tip never needs
+   to reach the remote. Keeping it local is what keeps the PR's head SHA **unmoved** by this
+   step — which is what makes Step 5.3's parentage proof satisfiable and its push a genuine
+   fast-forward. If the rebase/merge **conflicts** or materially changes the diff, the
+   resolution is content no reviewer approved: kick the PR back to `Reviewed` (Step 2.4)
+   rather than merge on stale approval. gh-merge does **not** resolve conflicts and publish the
+   result — that is `gh-resolve`/`gh-fixer` work, followed by a fresh `gh-review` pass.
 1. **Fast gates** (may run freely — CONVENTIONS.md §9), run **on that merged tree**:
    the profile's `<fast-gates>` commands (PROFILE.md).
 2. **Full suite once per `main`-merge boundary, green before the merge — per CONVENTIONS.md
@@ -405,20 +423,63 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    to Step 3.1 for the new head SHA — it needs a fresh review and, because Step 5.2's tree is
    now stale, a fresh `<full-suite>` run.
 
-   **When Step 6's version bump moved the head.** The bump commit is authored by *this*
-   procedure on top of `<reviewed-sha>`, so it legitimately changes the head. That is the only
-   permitted movement, and it must be **proved, not assumed**: before merging, assert the
-   pushed head's parent is exactly the SHA Step 3.1 validated, then pin the bump commit.
+   **Which head movements are legitimate — exactly one.** Between Step 3.1's read and
+   `gh pr merge` the PR's head may move for a single reason: **the version-bump commit this
+   procedure authors itself** (Step 6). Step 5.0's rebase is **not** a second reason — it is
+   local and never pushed — so the remote head is only ever `<reviewed-sha>`, or
+   `<reviewed-sha>` plus one bump commit authored here. That movement must be **proved, not
+   assumed**.
+
+   **Author the bump on `<reviewed-sha>`, never on the rebased tip.** A rebase rewrites the
+   PR's commits, so committing the bump on top of a rebased tip would make the proof below
+   false on the **healthy, no-attacker path** and the push below non-fast-forward. Return to
+   the exact commit Step 3.1 validated first:
 
    ```sh
+   git reset --hard                                     # drop <full-suite> churn (Step 6)
+   git checkout -B gh-merge-bump-<pr> <reviewed-sha>    # leave the throwaway rebase behind
+   #   ...edit <version-file>, stage ONLY that file, commit — Step 6...
    git rev-parse HEAD^                                  # MUST equal <reviewed-sha> -> else a
                                                         # foreign commit landed: STOP, back to Step 3.1
+   git push origin HEAD:<pr-head-branch>                # plain push; fast-forward BY CONSTRUCTION
    gh pr merge <pr> --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
    ```
 
-   Push the bump with a plain `git push` (**never** `--force`): a non-fast-forward rejection is
-   the same race being caught one step earlier. With no bump, `<reviewed-sha>` is the head and
-   is pinned directly.
+   Because the bump is authored **on** `<reviewed-sha>`, `HEAD^ == <reviewed-sha>` holds by
+   construction; the assertion can therefore only fail when something *else* moved the head,
+   which is precisely what it exists to catch.
+
+   | Case | Head SHA | What is pushed | What pins the merge |
+   |---|---|---|---|
+   | plain (no rebase, no bump) | unchanged | nothing | `<reviewed-sha>` directly |
+   | bump only | + 1 bump commit | the bump, fast-forward | `HEAD`, after `HEAD^ == <reviewed-sha>` |
+   | rebase only | **unchanged** — the rebase is local | nothing | `<reviewed-sha>` directly |
+   | rebase + bump | + 1 bump commit **on `<reviewed-sha>`** | the bump, fast-forward | `HEAD`, after `HEAD^ == <reviewed-sha>` |
+
+   **No push gh-merge makes is ever non-fast-forward**, so `--force` is never needed and never
+   permitted: the only thing it ever publishes is one commit authored on top of the current
+   remote head. A rejection therefore always means a foreign commit landed — the same race
+   caught one step earlier — and the response is to stop, not to force.
+
+   **The local→remote transfer, and the ordering it rests on (load-bearing, not incidental).**
+   The assertion reads the **local** `HEAD^`, while what must be trustworthy is the **pushed**
+   head. They are the same object only because of this ordering, so treat it as part of the
+   proof: (1) the bump is authored **locally** on `<reviewed-sha>`; (2) it is published with a
+   **plain, non-`--force`** push, which succeeds *only* if the remote head is still
+   `<reviewed-sha>` — so after a successful push the remote head **is** the local `HEAD`;
+   (3) `--match-head-commit "$(git rev-parse HEAD)"` re-checks that same value server-side at
+   merge time. **Never re-sync local from remote between the bump and the merge** — no
+   `git pull`, no `fetch` + `reset --hard`, no second `gh pr checkout`. Doing so would splice a
+   foreign commit into the local history *below* `HEAD^` and degrade the proof to "parentage is
+   not authorship."
+
+   **Foreign-commit refusal — two independent catches, neither forceable.** A commit `C` this
+   procedure did not author lands either **before** the Step 5.0 checkout — caught by Step 3.1
+   if `C` predates its read (no verdict summary names `C`), otherwise by the checkout assertion
+   (`HEAD == C != <reviewed-sha>`) — or **after** it, in which case `C` is not in the local
+   history, the plain push is rejected non-fast-forward, and `--match-head-commit` would still
+   refuse server-side. With no bump nothing is pushed at all and `<reviewed-sha>` is pinned
+   directly, so there is no window to exploit.
 
    Squash is the repo convention. Merge standalones/epics to `main`; merge children to the
    epic branch.
@@ -603,8 +664,8 @@ gh pr diff 902 --name-only     # -> includes src/server/config_loader.py  => OVE
 # Step 3.1 REQUIRE a completed review of the CURRENT head SHA (absence blocks, never passes):
 SHA901=$(gh pr view 901 --json headRefOid --jq .headRefOid)   # -> CAPTURE the SHA about to land
 gh api repos/<repo>/pulls/901/reviews --paginate \
-  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
-#   -> a verdict-summary review body naming that SHA MUST exist (commit_id corroborates),
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
+#   -> a VERDICT-SUMMARY BODY naming that SHA MUST exist (commit_id only corroborates it),
 #      else STOP (Step 3.1): in-flight (inside the 7-16 min window) -> wait and re-poll;
 #      absent past it -> surface. $SHA901 is CARRIED FORWARD to the merge; never re-read.
 # Step 3.2 confirm the review gate at merge time (CONVENTIONS.md §8): the PR reached Validated
@@ -615,20 +676,27 @@ gh pr view 901 --json reviewDecision,statusCheckRollup   # still Validated (Clau
 #    through gh-fixer first — never merge over an unaddressed required finding; else proceed.)
 # Step 4 D7 (CONVENTIONS.md §7d): #901 touches no live-order/.env/track-5 surface -> no human gate
 # Step 5.0 materialize the MERGED tree in the worktree (gate the code, NOT clean main):
-gh pr checkout 901 && git rebase origin/main        # tree under test == what the squash ships
+gh pr checkout 901
+[ "$(git rev-parse HEAD)" = "$SHA901" ] || exit 1   # the checkout IS the reviewed commit -> else a
+                                                    # foreign commit landed pre-checkout: STOP
+git rebase origin/main                              # LOCAL TEST TREE ONLY, never pushed: tree under
+                                                    # test == what the squash ships, head SHA unmoved
 # Step 5.1 fast gates + 5.2 full suite ON THAT MERGED TREE (this IS a main boundary, once before THIS merge):
 <fast-gates>                                        # the profile's fast-gate commands
 <full-suite>                                        # the profile's full-suite command
-# Step 6 version bump (touched bump-paths -> patch bump; worker left the line; I apply it):
+# Step 6 version bump (touched bump-paths -> patch bump; worker left the line; I apply it),
+#   authored on the REVIEWED commit — NOT on the throwaway rebased tip:
 git reset --hard                                    # discard full-suite fixture churn FIRST (never `git clean`: .env lives here)
-#   edit <version-file> version  1.0.NN -> 1.0.(NN+1)  on the PR branch, then stage ONLY that file:
+git checkout -B gh-merge-bump-901 "$SHA901"         # drop the local rebase; bump ON the reviewed SHA
+#   edit <version-file> version  1.0.NN -> 1.0.(NN+1)  on that commit, then stage ONLY that file:
 git add <version-file> && git commit -m "chore: bump version 1.0.NN -> 1.0.(NN+1)"
 git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
-git push origin HEAD:<pr901-head-branch>            # MUST push to the PR head; squash lands the REMOTE head
-# Step 5.3 squash-merge to main (lands the pushed head, bump included), PINNED to the SHA
-#   Step 3.1 validated. The bump commit above moved the head — prove that WE authored the only
-#   movement by asserting its parent is still the reviewed SHA, then pin the bump commit:
+# Step 5.3 prove WE authored the only head movement, then push and squash-merge to main.
+#   The assertion holds BY CONSTRUCTION (the bump was authored on $SHA901); it fails only if
+#   something ELSE moved the head:
 [ "$(git rev-parse HEAD^)" = "$SHA901" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+git push origin HEAD:<pr901-head-branch>            # plain push, fast-forward BY CONSTRUCTION (never
+                                                    # --force); squash lands the REMOTE head
 gh pr merge 901 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
 #   -> if GitHub refuses (head moved), someone else pushed: STOP, do NOT retry without the
 #      flag — back to Step 3.1 for the new SHA (fresh review + fresh full suite).
@@ -640,32 +708,42 @@ gh project item-archive --id <PVTI-item-id-for-801> --owner <board-owner> <board
 
 # ============ PR #902 (second: REQUIRES rebase onto new main first) ============
 git -C <pr902-worktree> fetch origin
-git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py region on top of #901
-#   resolve conflicts; re-run TARGETED tests only (not full suite yet):
-#   pytest -q tests/test_config_validation.py
-#   if the rebase materially changed #902's diff -> kick back to Reviewed (do NOT merge stale)
-# Step 3.1 the rebase MOVED the head SHA, so the prior review no longer names it — re-check,
-#   and do NOT merge until a review-stage verdict summary names the NEW head SHA (absence blocks):
-SHA902=$(gh pr view 902 --json headRefOid --jq .headRefOid)   # -> CAPTURE the POST-rebase SHA
+# Step 3.1 RE-CHECK before this second merge. NOT because gh-merge's own rebase moves the head
+#   — it does not; that rebase is a LOCAL TEST TREE ONLY and is never pushed (Step 5.0/5.3) —
+#   but because #901's merge window is minutes wide and ANY push to #902 inside it moves #902's
+#   head and voids its review. `--json headRefOid` observes the REMOTE, never a local rebase:
+SHA902=$(gh pr view 902 --json headRefOid --jq .headRefOid)   # -> the CURRENT remote head
 gh api repos/<repo>/pulls/902/reviews --paginate \
-  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
-#   -> a verdict-summary review body must name the POST-rebase SHA; $SHA902 is CARRIED
-#      FORWARD to the merge below. Never re-read the head at merge time.
-# Step 3.2 confirm the review gate again after the rebase (still Validated + CI green; Step 3.3
+  --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
+#   -> a VERDICT-SUMMARY BODY must name $SHA902: head unmoved -> the earlier pass still names it
+#      and carries; head moved -> STOP, #902 needs a fresh review. $SHA902 is CARRIED FORWARD.
+# Step 3.2 confirm the review gate again before this merge (still Validated + CI green; Step 3.3
 #   Codex is NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
 gh pr view 902 --json reviewDecision,statusCheckRollup
 # Step 4 D7: #902 touches no high-risk surface -> no human gate
-# Step 5.0/5.1/5.2 the rebase above already put the MERGED tree in the worktree; gate it (not clean main):
+# Step 5.0 materialize the MERGED tree — LOCAL ONLY, and starting from the reviewed commit:
+git -C <pr902-worktree> checkout -B gh-merge-tree-902 "$SHA902"
+git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py region on top of #901
+#   CLEAN rebase -> this is the tree to gate; #902's REMOTE head is still $SHA902, untouched.
+#   IF IT CONFLICTS (or materially changes #902's diff): the resolution is content no reviewer
+#   approved -> kick #902 back to `Reviewed` (Step 2.4) and STOP. gh-merge never resolves
+#   conflicts and publishes the result, which is why no push below is ever non-fast-forward.
+#   re-run TARGETED tests only on the rebased tree (not the full suite yet):
+#   pytest -q tests/test_config_validation.py
+# Step 5.1/5.2 gate THAT merged tree (not clean main):
 <fast-gates>                                        # the profile's fast-gate commands
 <full-suite>                                        # second main boundary — do NOT rely on #901's run
-# Step 6 version bump SERIALLY (1.0.(NN+1) -> 1.0.(NN+2)) so the two merges never collide on the line:
+# Step 6 version bump SERIALLY (1.0.(NN+1) -> 1.0.(NN+2)) so the two merges never collide on the
+#   line — again authored on the REVIEWED commit, NOT on the throwaway rebased tip:
 git reset --hard                                    # discard full-suite fixture churn FIRST (never `git clean`: .env lives here)
+git checkout -B gh-merge-bump-902 "$SHA902"         # drop the local rebase; bump ON the reviewed SHA
 #   edit <version-file> version 1.0.(NN+1) -> 1.0.(NN+2), then stage ONLY that file:
 git add <version-file> && git commit -m "chore: bump version 1.0.(NN+1) -> 1.0.(NN+2)"
 git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
-git push origin HEAD:<pr902-head-branch>            # push to the PR head BEFORE merge, else the squash drops it
-# Step 5.3 squash-merge, PINNED to the Step 3.1-validated SHA (same parent proof as #901):
+# Step 5.3 same parent proof as #901 (holds BY CONSTRUCTION), then push and squash-merge:
 [ "$(git rev-parse HEAD^)" = "$SHA902" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+git push origin HEAD:<pr902-head-branch>            # plain push, fast-forward BY CONSTRUCTION; push to
+                                                    # the PR head BEFORE merge, else the squash drops it
 gh pr merge 902 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
 # Step 8 close the issue, then retire the board item (no closed Status option — leave at Validated or remove):
 gh issue close 802
@@ -675,12 +753,13 @@ gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board
 **Dry-run verdict (what it prints, having executed nothing):** order = **#901 then #902**;
 reason = real `config_loader.py` overlap + dual snapshot regeneration force serialize, #901
 first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both carry a
-completed review-stage verdict summary naming their **current** head SHA (Step 3.1 — #902's
-is re-checked after the rebase moved its SHA) and are confirmed still `Validated` via the
-Claude
+completed review-stage **verdict-summary body** naming their **current** head SHA (Step 3.1 —
+#902's is re-checked immediately before its own merge, because #901's merge window is wide
+enough for a push to #902 to void its review; the local rebase itself moves nothing) and are
+confirmed still `Validated` via the Claude
 review+validation stages (no Codex posted, and none required — §8); neither trips the D7
 surface gate; two `main`-boundary full-suite runs (one per merge, not one shared); two
-**serial** patch bumps.
+**serial** patch bumps, each authored on its own reviewed SHA and pushed fast-forward.
 No `gh pr merge` (or any mutating command) is executed in a dry run — it stops here with the
 plan above for the operator to approve.
 

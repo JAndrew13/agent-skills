@@ -611,6 +611,193 @@ def test_dry_run_example_models_the_new_check_at_both_merge_sites() -> None:
     ]
     assert example.count("--json headRefOid --jq .headRefOid") == 2
     assert example.count('select(.user.login=="<automation-login>")') == 2
-    # ...including after the rebase, which moves the head SHA and voids the prior review.
+    # The login filter ALONE is not the check -- F2 demoted commit_id/login-only matching and
+    # made the non-empty verdict-summary body the primary criterion. Counting only the login
+    # filter let a DRY-RUN with the discriminator stripped out still pass this guard.
+    assert example.count('select(.body != "")') == 2, (
+        "both merge sites must carry the F2 body discriminator, not just the login filter"
+    )
     lowered = " ".join(example.lower().split())
-    assert "the rebase moved the head sha" in lowered
+    # The second site re-checks because a PUSH can move the head inside the first merge's
+    # window -- NOT because gh-merge's own rebase moves it. It does not: that rebase is a
+    # local test tree that is never published, which is exactly what keeps the Step 5.3
+    # parentage proof satisfiable on the healthy path (see the F1-round-2 tests below).
+    assert "local test tree only" in lowered
+    assert "never pushed" in lowered
+    assert "voids its review" in lowered
+
+
+# --------------------------------------------------------------------------------------
+# Round 2 — F1 was fail-closed but UNSATISFIABLE, and the F2 discriminator was applied
+# inconsistently. The tests below pin the corrected rules.
+# --------------------------------------------------------------------------------------
+
+
+def test_step5_rebase_is_local_only_and_is_never_published() -> None:
+    """The whole F1 round-2 fix rests on one fact: gh-merge never publishes a rebase.
+
+    Round 1 proved the bump's parentage with ``HEAD^ == <reviewed-sha>``. But Step 5.0
+    rebases onto ``origin/main``, which REWRITES the PR's commits -- so on the healthy,
+    no-attacker path the bump lands on the *rebased* tip, ``HEAD^`` is that tip, and the
+    assertion ``exit 1``s. Reproduced in a bare repo: reviewed ``4c01da80`` vs post-rebase
+    tip ``c3af1deb``. The push fails too: a rebased branch cannot fast-forward onto the PR
+    head, and ``--force`` is forbidden. gh-merge would have refused every PR it rebased.
+
+    The resolution is not a bigger assertion -- it is keeping the rebase LOCAL. ``gh pr
+    merge --squash`` re-derives the merged tree server-side from the PR's own commits, so
+    the rebased tip never needs to reach the remote; it exists only to gate the right tree.
+    Keep it local and the head SHA does not move, which makes every other proof hold.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    # (a) The rebase is declared a throwaway local artifact that is never published.
+    assert "local test tree only" in lowered5
+    assert "throwaway test artifact" in lowered5
+    assert "gh-merge never publishes it" in lowered5
+    # (b) ...and the REASON is stated, so a later editor cannot "helpfully" push it.
+    assert "re-derives that tree server-side" in lowered5
+    assert "head sha" in lowered5 and "unmoved" in lowered5
+    # (c) A rebase that MUST be published (conflicts) leaves gh-merge entirely.
+    assert "kick the pr back to `reviewed`" in lowered5
+    assert "does **not** resolve conflicts and publish" in step5.lower()
+
+
+def test_bump_is_authored_on_the_reviewed_sha_not_the_rebased_tip() -> None:
+    """``HEAD^ == <reviewed-sha>`` must hold BY CONSTRUCTION, not by luck (F1 round 2).
+
+    The assertion is only satisfiable if the bump commit's parent really is the reviewed
+    commit. That is guaranteed by returning to ``<reviewed-sha>`` before committing the
+    bump, rather than committing on whatever ``gh pr checkout`` + ``git rebase`` left in
+    the worktree. Without this, the assertion is unsatisfiable on the rebase path -- which
+    is exactly the round-1 defect.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    assert "author the bump on `<reviewed-sha>`, never on the rebased tip" in lowered5
+    assert "git checkout -B gh-merge-bump-<pr> <reviewed-sha>" in step5
+    assert "by construction" in lowered5
+
+    # Both DRY-RUN merge sites must actually DO it -- prose alone is what round 1 shipped.
+    example = merge[
+        merge.index("## Worked example — DRY RUN") : merge.index("## Worked example — Step 0")
+    ]
+    assert example.count('git checkout -B gh-merge-bump-901 "$SHA901"') == 1
+    assert example.count('git checkout -B gh-merge-bump-902 "$SHA902"') == 1
+    # ...and the parent proof still guards both of them.
+    assert example.count("git rev-parse HEAD^") == 2
+
+
+def test_head_movement_proof_covers_all_four_cases() -> None:
+    """Plain, bump-only, rebase-only and rebase+bump must ALL be reachable (F1 round 2).
+
+    Round 1 handled bump-only and left rebase-only and rebase+bump unsatisfiable. The
+    case table is the artifact that makes the omission of a case visible, so pin all four
+    rows plus the single-legitimate-movement rule they instantiate.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    assert "which head movements are legitimate — exactly one" in lowered5
+    for case in ("plain (no rebase, no bump)", "bump only", "rebase only", "rebase + bump"):
+        assert f"| {case} |" in step5, f"the head-movement case table must cover: {case}"
+    # The two no-bump rows push nothing and pin the reviewed SHA directly.
+    assert step5.count("`<reviewed-sha>` directly") >= 2
+    # The rebase-only row must say the head is UNCHANGED -- that is the round-1 blind spot.
+    assert "**unchanged** — the rebase is local" in step5
+
+
+def test_no_gh_merge_push_is_ever_non_fast_forward() -> None:
+    """The non-``--force`` rule (`:419-421`) must stay satisfiable, not just mandated.
+
+    Round 1 mandated a plain push while Step 5.0 produced a rebased branch that cannot
+    fast-forward onto the PR head -- so the rule forbade the only thing that could have
+    published it. With the rebase kept local, the only object gh-merge ever pushes is one
+    commit authored on top of the current remote head, so a rejection ALWAYS means a
+    foreign commit landed. That is what makes "never force" a real refusal rather than a
+    dead end.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    assert "no push gh-merge makes is ever non-fast-forward" in lowered5
+    assert "never needed and never permitted" in lowered5
+    assert "a rejection therefore always means a foreign commit landed" in lowered5
+
+    # Nothing anywhere in the skill may push with --force.
+    forced = [
+        line.strip()
+        for line in merge.splitlines()
+        if re.search(r"^\s*git push\b", line) and "--force" in line
+    ]
+    assert not forced, f"gh-merge must never force-push: {forced}"
+
+
+def test_local_head_proof_is_bound_to_the_pushed_head_by_a_stated_ordering() -> None:
+    """Close the local-``HEAD^`` vs pushed-head gap the re-review flagged (F1 round 2).
+
+    The prose described the assertion as being on "the pushed head's parent" while the
+    command reads the LOCAL ``HEAD^``. Those coincide only because the bump is authored
+    locally and published by a plain push that can only succeed onto the reviewed head --
+    an ordering that was never marked load-bearing. If any step re-synced local from
+    remote between the bump and the merge, the proof would degrade to "parentage is not
+    authorship" (a foreign commit spliced in below ``HEAD^``).
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    assert "load-bearing, not incidental" in lowered5
+    assert "after a successful push the remote head **is** the local `head`" in lowered5
+    assert "never re-sync local from remote between the bump and the merge" in lowered5
+    assert "parentage is not authorship" in lowered5
+
+
+def test_foreign_commit_is_refused_at_two_independent_points() -> None:
+    """The concurrent-commit race must stay closed under the new ordering (F1 round 2).
+
+    The re-review confirmed round 1 closed it; the fix must not lose that. A foreign
+    commit ``C`` lands either before the Step 5.0 checkout (the new checkout assertion, or
+    Step 3.1 itself if ``C`` predates its read) or after it (the plain push is rejected
+    non-fast-forward). Both catches must be named, and the checkout assertion must exist
+    at both DRY-RUN sites -- not only in the prose.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+
+    assert "two independent catches, neither forceable" in lowered5
+    assert "the checkout assertion is the first of two foreign-commit catches" in lowered5
+    assert "rejected non-fast-forward" in lowered5
+
+    example = merge[
+        merge.index("## Worked example — DRY RUN") : merge.index("## Worked example — Step 0")
+    ]
+    assert example.count('[ "$(git rev-parse HEAD)" = "$SHA901" ] || exit 1') == 1
+    # #902 starts its local rebase FROM the reviewed commit, which is the same binding.
+    assert 'checkout -B gh-merge-tree-902 "$SHA902"' in example
+
+
+def test_headrefoid_is_documented_as_a_remote_read() -> None:
+    """``--json headRefOid`` cannot observe a local rebase (F1 round 2, second thread).
+
+    Round 1's #902 block captured ``$SHA902`` from ``headRefOid`` after a local rebase and
+    called it "the POST-rebase SHA". It is not -- it is the PRE-rebase remote head, i.e.
+    the exact SHA the comment two lines above had just declared void. The post-rebase
+    re-check was therefore satisfied by precisely the stale review it existed to reject.
+    """
+    example = _read(_MERGE)[
+        _read(_MERGE).index("## Worked example — DRY RUN") : _read(_MERGE).index(
+            "## Worked example — Step 0"
+        )
+    ]
+    lowered = " ".join(example.lower().split())
+    assert "observes the remote, never a local rebase" in lowered
+    # And the stale characterisation must be gone.
+    assert "post-rebase sha" not in lowered
+    assert "the current remote head" in lowered
