@@ -124,6 +124,48 @@ def test_step3_requires_a_completed_review_of_the_current_head_sha() -> None:
     assert "no `gh pr merge`" in step3.lower()
 
 
+def test_completion_discriminator_is_the_body_never_the_inline_count() -> None:
+    """The body is the discriminator; author, state and inline-count are all unreliable.
+
+    Empirically settled on kalshi-boy PR #1179 (lead-supplied measurement, head
+    ``72fd2286``): sequential inline POSTs DO create review objects -- ``state: COMMENTED``,
+    not ``PENDING`` -- carrying the current head SHA with an EMPTY body, 3m53s before the
+    genuine verdict existed. Worse, on that PR the empty-bodied objects were minted by
+    **gh-fixer replying in-thread**, under the same automation login the reviewer uses. So:
+
+    * ``user.login`` cannot discriminate (review and fix stages share the account);
+    * ``state != "PENDING"`` cannot discriminate (the phantoms are COMMENTED);
+    * ``inline == 0`` MUST NOT be used -- §8's batched recipe legitimately posts a verdict
+      body together with inline comments (same PR, 13:25:15Z: body 1889, inline 1).
+
+    Only a non-empty body naming the head SHA separates the verdict from the phantoms.
+    """
+    step3 = _flat(_step3_section(_read(_MERGE)))
+    lowered = step3.lower()
+
+    # The measured evidence is cited, not assumed.
+    assert "measured, not assumed" in lowered
+    assert "#1179" in step3
+
+    # The gh-fixer vector is named explicitly -- the fix must survive a fixer's replies,
+    # which is strictly harder than surviving a reviewer's posting sequence.
+    assert "manufactured by `gh-fixer`" in step3 or "manufactured by gh-fixer" in lowered
+    assert "author identity does not discriminate" in lowered
+    assert "same" in lowered and "<automation-login>" in step3
+
+    # state != PENDING is explicitly disqualified as a discriminator.
+    assert "not** `pending`" in lowered or "not `pending`" in lowered
+
+    # The inline-count trap is called out and forbidden, with the batched-recipe reason.
+    assert "never on the inline-comment count" in lowered
+    assert "do not" in lowered and "inline == 0" in step3
+    assert "b607aa52" in step3, "the batched verdict+inline counter-example must be cited"
+
+    # The false-negative branch is answered by observation, not asserted away.
+    assert "the converse failure does not occur" in lowered
+    assert "livelock" in lowered
+
+
 def test_step3_input_contract_is_the_review_routines_writer_obligation() -> None:
     """Pin the WRITER-side obligation Step 3.1 consumes, and bind the reader to it (F3).
 

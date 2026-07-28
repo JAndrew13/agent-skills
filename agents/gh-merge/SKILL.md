@@ -233,15 +233,43 @@ counts as completed for this head SHA only when **all** of the following hold:
 
 **Bare inline-comment review objects do NOT count, however many there are.** §8's 422 recipe
 permits posting findings as N sequential `POST /repos/<repo>/pulls/<n>/comments` calls, each
-carrying `{commit_id, path, line}`; where that path creates a review object per comment, each
-one has an **empty body** and a matching `commit_id`. Counting those as "completed" would let
-the **first** inline comment of an in-progress review satisfy this gate while the blocking
-`[change-requested]` finding is still unposted — #1150's vacuous-clean reproduced at ~1 minute
-instead of 8 (its own nine findings posted across a 48-second spread). The non-empty
-verdict-summary body is the **only** artifact that distinguishes a finished review from a
-partial one, so it — not `commit_id` — is what this gate matches on. Symmetrically, a review
-posted **only** as inline comments with no verdict summary is **not** a completed review: that
-is a review-stage contract violation, and the disposition is *stop and surface*, not merge.
+carrying `{commit_id, path, line}`. **Measured, not assumed:** that path *does* create a real
+review object per comment — `state: COMMENTED` (**not** `PENDING`), `commit_id` equal to the
+current head SHA, and an **empty body**. Counting those as "completed" would let the **first**
+inline comment satisfy this gate while the blocking `[change-requested]` finding is still
+unposted — #1150's vacuous-clean reproduced at ~1 minute instead of 8.
+
+> **Evidence** (kalshi-boy PR **#1179**, head `72fd2286`): two empty-bodied `COMMENTED`
+> reviews at `13:34:20Z` and `13:34:27Z`, both naming `72fd2286`; the genuine re-review
+> verdict (body 2549 chars, opening *"Re-reviewed head SHA 72fd2286…"*) did not exist until
+> `13:38:13Z`. A `commit_id`-and-`state`-based check would have passed **3m53s early**.
+
+**The phantom reviews are manufactured by `gh-fixer`, not only by the reviewer.** On #1179
+those two empty-bodied objects were created by the **fixer replying in-thread** — the ordinary
+act of addressing findings mints review objects that name the *new* head SHA. Two consequences
+this gate must survive:
+
+- **Author identity does not discriminate.** `gh-review` and `gh-fixer` post under the *same*
+  `<automation-login>`, so filtering on `user.login` cannot tell a reviewer's verdict from a
+  fixer's reply. Only the **body** can.
+- **The fix must hold against a fixer's replies, not merely a reviewer's posting sequence** —
+  a strictly stronger requirement, and the common case: every fix round re-creates the
+  condition on a fresh head SHA.
+
+**Match on the body; never on the inline-comment count.** It is tempting to discriminate with
+"zero inline comments", and on #1179 the numbers happen to line up (verdict: 0 inline / 2549
+body; phantoms: 1 inline / 0 body). **Do not.** §8's *batched* recipe legitimately posts a
+verdict body **and** inline comments in one COMMENT-event review — observed on that same PR at
+`13:25:15Z` (body 1889 chars, 1 inline, head `b607aa52`). An `inline == 0` discriminator would
+reject that valid review. The **non-empty body naming the head SHA** is the reliable signal;
+the inline count is not.
+
+**The converse failure does not occur.** A verdict summary is genuinely emitted in practice
+(#1179's names its SHA in the opening line), so keying on it creates no false-negative
+livelock — the objection that this criterion might refuse a fully-reviewed PR forever is
+answered by observation. Accordingly, a review posted **only** as inline comments with no
+verdict summary is **not** a completed review: that is a review-stage contract violation, and
+the disposition is *stop and surface*, not merge.
 
 **Refusal condition — stated in this one place.** If **no** review-stage verdict summary names the
 PR's current head SHA, the PR is **unreviewed**: do not merge it. **Absence of a review is a
@@ -777,6 +805,23 @@ gh api repos/<repo>/pulls/1150/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | select(.body != "") | {commit_id, body}'
 #   -> []   inline-comment review objects exist, but NO verdict summary => still unreviewed
 #   >>> STOP HERE. Same refusal, same disposition (in flight -> wait and re-poll). <<<
+```
+
+**Counter-case — the fixer's own replies (the common case, measured on #1179).** Now suppose
+#1150 went round the `gh-fixer` loop: the fixer pushed a fix, moving the head to `ghi1150`,
+and replied in-thread to each finding. Those replies **mint review objects** — `COMMENTED`,
+`commit_id == ghi1150`, empty body — under the **same** `<automation-login>` the reviewer
+uses. So at the moment the fixer finishes, the PR carries fresh reviews naming the *current*
+head SHA that **no reviewer ever wrote**, and neither `user.login` nor `state != "PENDING"`
+can tell them apart from a real verdict. This is the ordinary path, not an edge case: every
+fix round re-creates it. Only the body filter refuses it.
+
+```sh
+gh api repos/<repo>/pulls/1150/reviews --paginate \
+  --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, state, body_len: (.body|length)}'
+#   -> {ghi1150, "COMMENTED", 0}   x N   <- gh-fixer's in-thread replies, NOT a review
+#   with `select(.body != "")` applied: []  => correctly still unreviewed at ghi1150
+#   >>> STOP HERE. The fix round does not review itself. <<<
 ```
 
 **Counter-case — the silent failed run.** Change one fact: the review run for `abc1150`
