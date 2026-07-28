@@ -37,6 +37,13 @@ _AGENTS = _ROOT / "agents"
 _MERGE = _AGENTS / "gh-merge" / "SKILL.md"
 _REVIEW = _AGENTS / "gh-review" / "SKILL.md"
 _CONVENTIONS = _AGENTS / "gh-workflow" / "CONVENTIONS.md"
+_REVIEW_ROUTINE = _ROOT / "routines" / "gh-review.routine.md"
+
+# Step 3.1's ACTUAL input contract: the WRITER-side obligation that the review stage emits
+# the SHA in its terminal verdict-summary body. Everything the gate reads depends on this
+# one sentence, so it is pinned verbatim and bound to the reader that consumes it.
+_WRITER_OBLIGATION = "State the head SHA you reviewed."
+_WRITER_OBLIGATION_CONTEXT = "A top-level body is only for the overall verdict summary."
 
 # The canonical refusal MECHANIC. Split so THIS test file is not itself an occurrence
 # of the substring it counts (the marker-splitting technique used across the ledger
@@ -111,6 +118,49 @@ def test_step3_requires_a_completed_review_of_the_current_head_sha() -> None:
     # The refusal is a real stop: nothing downstream runs.
     assert "do not merge it" in lowered
     assert "no `gh pr merge`" in step3.lower()
+
+
+def test_step3_input_contract_is_the_review_routines_writer_obligation() -> None:
+    """Pin the WRITER-side obligation Step 3.1 consumes, and bind the reader to it (F3).
+
+    ``_REVIEW_PRECEDENT`` (below) pins gh-review's *reader-side* idempotency guard -- that
+    is gh-review checking ITSELF before it acts, which Step 3.1 does not consume. What
+    Step 3.1 actually consumes is the obligation that the review stage **emits** the SHA,
+    in ``routines/gh-review.routine.md`` step 4. Before this test, no test in this file
+    referenced that file at all: deleting that one sentence would silently remove the new
+    gate's only input with the whole suite still green.
+
+    Two halves, deliberately: (a) preservation -- the routine keeps the obligation; (b)
+    forward-looking -- gh-merge names that file as its input contract, so the reader and
+    the writer cannot drift apart unnoticed. (b) is what makes this fail on unpatched main.
+    """
+    routine = _read(_REVIEW_ROUTINE)
+    flat_routine = _flat(routine)
+
+    # (a) The writer obligation survives -- and stays attached to the VERDICT SUMMARY,
+    #     which is what Step 3.1 matches on (see the F2 criterion above).
+    assert _WRITER_OBLIGATION in flat_routine, (
+        "routines/gh-review.routine.md must keep 'State the head SHA you reviewed.' -- "
+        "it is the entire input contract for gh-merge Step 3.1"
+    )
+    assert _WRITER_OBLIGATION_CONTEXT in flat_routine, (
+        "the head-SHA obligation must stay bound to the top-level verdict summary"
+    )
+    # The obligation must sit in the SAME step as the verdict-summary sentence, not drift
+    # into an unrelated part of the routine.
+    assert flat_routine.index(_WRITER_OBLIGATION) - flat_routine.index(
+        _WRITER_OBLIGATION_CONTEXT
+    ) < 200, "the two sentences must remain adjacent (same routine step)"
+
+    # (b) gh-merge Step 3.1 names that file as the source of its input, and quotes the
+    #     obligation verbatim -- so a future edit to either side breaks this test.
+    step3 = _flat(_step3_section(_read(_MERGE)))
+    assert "routines/gh-review.routine.md" in step3, (
+        "Step 3.1 must cite the writer-side obligation it depends on"
+    )
+    assert "writer-side obligation this gate consumes" in step3.lower()
+    assert _WRITER_OBLIGATION in step3, "Step 3.1 quotes the obligation verbatim"
+    assert _WRITER_OBLIGATION_CONTEXT in step3
 
 
 def test_completed_means_the_verdict_summary_body_not_any_review_object() -> None:
