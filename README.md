@@ -72,8 +72,10 @@ installer (e.g. a `claude install` command that recursively copies
 invariants intact — the #800 board-economy contract (injected item-ids, gated
 `item-list` fallback), the #834/#868/#869/#870 sprint-ledger + merge-ownership
 contracts, the #927 version-bump churn guard, the #1155 completed-review merge
-gate (a merge needs positive evidence of a review of the PR's current head SHA;
-Codex stays de-gated), and the conventions-scope / session-shape honesty guard.
+gate (a merge needs positive evidence of a *completed* review — the review
+stage's verdict-summary body naming the PR's current head SHA — and that same
+SHA is pinned to the merge via `--match-head-commit`; Codex stays de-gated), and
+the conventions-scope / session-shape honesty guard.
 Run them with:
 
 ```sh
