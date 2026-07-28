@@ -391,11 +391,53 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    ```sh
    git fetch origin
    git checkout -B gh-merge-<session> origin/main   # or origin/<epic-branch> for a child
-   gh pr checkout <pr>            # OR: git merge --no-ff origin/<pr-head-branch>
+   gh pr checkout <pr>            # fetches the PR's CURRENT remote tip — the only way in
    [ "$(git rev-parse HEAD)" = "<reviewed-sha>" ] || exit 1   # what you checked out IS what
                                                              # Step 3.1 validated -> else STOP
    git rebase origin/main         # LOCAL TEST TREE ONLY — never pushed (see Step 5.3)
    ```
+
+   **`gh pr checkout` is the only way to bring the PR's code in — deliberately single-path.**
+   An earlier revision offered `git merge --no-ff origin/<pr-head-branch>` as an alternative
+   here. It is **removed, not merely discouraged**, for three reasons, and it must not come
+   back: (1) it makes the assertion above `exit 1` on the **healthy, no-attacker path**, because
+   a merge commit is a *new* commit and can never equal `<reviewed-sha>` — reproduced in a bare
+   repo; (2) the tree it produces is a **merge resolution**, so on any non-trivial base it is
+   not the tree `gh pr merge --squash` ships, which is this step's entire purpose; (3) it
+   destroys the `<reviewed-sha>` identity that Step 5.3's parentage proof and
+   `--match-head-commit` both rest on. `gh pr checkout` is also what makes the assertion a real
+   catch rather than a tautology: it fetches the PR's **current remote tip**, so if a foreign
+   commit landed since Step 3.1's read, HEAD is *their* commit and the assertion fires.
+
+   **Whatever brings the PR's code in must resolve the REMOTE TIP, never the literal
+   `<reviewed-sha>`.** `gh pr checkout <pr>` does; so does an explicit
+   `git checkout -B <local> origin/<pr-head-branch>` in a worktree that already has the branch
+   (the second dry run uses that form). A `git checkout -B <local> <reviewed-sha>` here would
+   satisfy the assertion **by construction and catch nothing** — it silently discards a foreign
+   commit instead of stopping on it, downgrading the two-catch design to one. (Step 6's
+   `git checkout -B gh-merge-bump-<pr> <reviewed-sha>` — mover #4 below — *is* a literal-SHA
+   checkout, correctly: by then the tip has already been verified, and its job is to re-pin
+   after the throwaway rebase, not to re-check.)
+
+   **The full set of HEAD movements between Step 3.1 and `gh pr merge` — closed, not open.**
+   Exactly five commands in this procedure move `HEAD` after Step 3.1's read, and every one
+   lands on a value the proofs model:
+
+   | # | Command | Where | `HEAD` after | Assertion it must satisfy |
+   |---|---|---|---|---|
+   | 1 | `git checkout -B gh-merge-<session> origin/main` | 5.0 | current base | none yet — PR code not applied |
+   | 2 | `gh pr checkout <pr>` — or `git checkout -B <local> origin/<pr-head-branch>` | 5.0 | PR's **remote tip** | `HEAD == <reviewed-sha>` — **passes iff no foreign commit** |
+   | 3 | `git rebase origin/main` | 5.0 | rebased tip (**local only**) | none — never pushed, head SHA unmoved |
+   | 4 | `git checkout -B gh-merge-bump-<pr> <reviewed-sha>` | 6 | `<reviewed-sha>` | re-establishes the pin, discarding #3 |
+   | 5 | `git commit` (the bump) | 6 | bump on `<reviewed-sha>` | `HEAD^ == <reviewed-sha>` — **by construction** |
+
+   `git reset --hard` and `git checkout -- .` (Step 6) move the index and working tree, **not**
+   `HEAD`, so they add no case. Anything **not** on this list — `git merge`, `git pull`,
+   `git cherry-pick`, `git commit --amend`, a second `gh pr checkout`, `fetch` + `reset --hard`
+   — is **forbidden between Step 3.1 and the merge**: each either breaks an assertion on the
+   healthy path or splices a commit no reviewer saw beneath the one the proof inspects.
+   `test_head_movement_commands_after_step31_are_a_closed_sanctioned_set` pins this list, so a
+   sixth mover cannot be added without failing the suite.
 
    Equivalently, run the gates against the **PR head after it has been rebased onto the current
    base** — the point is the tree you test is byte-for-byte what the squash will ship.
@@ -739,8 +781,13 @@ gh api repos/<repo>/pulls/902/reviews --paginate \
 #   Codex is NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
 gh pr view 902 --json reviewDecision,statusCheckRollup
 # Step 4 D7: #902 touches no high-risk surface -> no human gate
-# Step 5.0 materialize the MERGED tree — LOCAL ONLY, and starting from the reviewed commit:
-git -C <pr902-worktree> checkout -B gh-merge-tree-902 "$SHA902"
+# Step 5.0 materialize the MERGED tree — LOCAL ONLY, and starting from the reviewed commit.
+#   Take the REMOTE TIP, never the literal "$SHA902": checking out the SHA you are about to
+#   assert on would satisfy the assertion by construction and catch nothing.
+git -C <pr902-worktree> fetch origin
+git -C <pr902-worktree> checkout -B gh-merge-tree-902 origin/<pr902-head-branch>   # the REMOTE tip
+[ "$(git -C <pr902-worktree> rev-parse HEAD)" = "$SHA902" ] || exit 1   # the tip IS the reviewed
+                                                    # commit -> else a foreign commit landed: STOP
 git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py region on top of #901
 #   CLEAN rebase -> this is the tree to gate; #902's REMOTE head is still $SHA902, untouched.
 #   IF IT CONFLICTS (or materially changes #902's diff): the resolution is content no reviewer

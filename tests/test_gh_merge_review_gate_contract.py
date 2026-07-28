@@ -757,6 +757,104 @@ def test_head_movement_proof_covers_all_four_cases() -> None:
     assert "**unchanged** — the rebase is local" in step5
 
 
+def test_head_movement_commands_after_step31_are_a_closed_sanctioned_set() -> None:
+    """Every HEAD-moving command in the window must be on a closed list (F2 round 3).
+
+    Three rounds in a row shipped an assertion that ``exit 1``s on a *legitimate* head
+    movement the text did not model: round 1 missed the version bump, round 2 missed the
+    Step 5.0 rebase, round 3 missed ``git merge --no-ff`` -- which was sitting on the very
+    line the assertion was added under, as a documented ``# OR:`` alternative, and produced
+    a merge commit that can never equal ``<reviewed-sha>`` (reproduced in a bare repo: the
+    ``gh pr checkout`` path exits 0, the ``merge --no-ff`` path exits 1, no attacker).
+
+    Enumerating case-by-case is what kept failing. So this pins the *set* instead: the
+    procedure declares a closed list of HEAD movers, and the file may not contain a
+    HEAD-moving git command outside it. A seventh mover fails here rather than in
+    production.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+
+    # (a) The closed-set declaration exists and is named as closed.
+    assert "closed, not open" in step5, (
+        "Step 5 must declare the HEAD-movement set closed -- the case-by-case approach "
+        "shipped three misses in three rounds"
+    )
+    for mover in (
+        "git checkout -B gh-merge-<session> origin/main",
+        "gh pr checkout <pr>",
+        "git rebase origin/main",
+        "git checkout -B gh-merge-bump-<pr> <reviewed-sha>",
+    ):
+        assert mover in step5, f"the closed HEAD-mover table must list: {mover}"
+    # Non-movers are called out so they are not mistaken for a gap.
+    assert "move the index and working tree, **not**" in step5
+
+    # (b) The forbidden movers are named, `git merge` first -- that is round 3's defect.
+    forbidden_prose = step5[step5.index("Anything **not** on this list") :]
+    for banned in ("git merge", "git pull", "git cherry-pick", "git commit --amend"):
+        assert f"`{banned}`" in forbidden_prose, f"the ban list must name: {banned}"
+
+    # (c) MECHANICAL: no `git merge` inside any fenced recipe -- INCLUDING in a comment.
+    #     The defect took exactly that form: `gh pr checkout <pr>  # OR: git merge --no-ff
+    #     origin/<pr-head-branch>`. A `# OR:` comment in a recipe an agent executes is an
+    #     instruction, not an annotation, so comments are scanned too. (Prose OUTSIDE a
+    #     fence may name `git merge` freely -- the ban list and the removal rationale must
+    #     be able to say the words.)
+    offenders = []
+    in_fence = False
+    for lineno, line in enumerate(merge.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence and re.search(r"\bgit\s+(-C\s+\S+\s+)?merge\b", line):
+            offenders.append(f"{lineno}: {line.strip()}")
+    assert not offenders, (
+        "no fenced recipe in gh-merge may contain `git merge` -- in code OR in a comment: "
+        "it produces a merge commit the checkout assertion can never satisfy on the healthy "
+        f"path, which is exactly how the round-3 defect was written: {offenders}"
+    )
+
+    # (d) The removal is DELIBERATE and explained, not a silent drop: the file must say
+    #     the single-path checkout is intentional and why the alternative cannot return.
+    assert "deliberately single-path" in step5
+    assert "removed, not merely discouraged" in step5
+
+
+def test_pr_code_is_materialized_from_the_remote_tip_never_the_literal_reviewed_sha() -> None:
+    """The checkout assertion must be a real catch, not a tautology (F2 round 3).
+
+    ``gh pr checkout`` resolves the PR's *remote tip*, so the assertion fires when a foreign
+    commit landed since Step 3.1. Checking out the literal ``<reviewed-sha>`` instead would
+    pass the assertion **by construction** while silently discarding that commit -- the
+    first of the two foreign-commit catches, gone.
+
+    The second dry run did exactly that (``checkout -B gh-merge-tree-902 "$SHA902"``, with
+    no assertion at all), so the rule is stated AND that site is fixed to resolve
+    ``origin/<pr902-head-branch>`` and assert. Step 6's literal-SHA checkout is explicitly
+    carved out: by then the tip is already verified and its job is re-pinning.
+    """
+    merge = _read(_MERGE)
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+
+    assert "never the literal" in step5.lower(), (
+        "Step 5.0 must forbid materializing the PR from the literal <reviewed-sha>"
+    )
+    assert "by construction and catch nothing" in step5
+    # The Step 6 re-pin is carved out, so the rule is not read as banning mover #4.
+    assert "mover #4" in step5
+
+    # The second dry run must resolve the REMOTE branch and carry the assertion.
+    dry = merge[merge.index("gh-merge-tree-902") :]
+    assert "origin/<pr902-head-branch>" in dry, (
+        "dry-run #902 must materialize from the remote tip, not the literal $SHA902"
+    )
+    assert '= "$SHA902" ] || exit 1' in dry, (
+        "dry-run #902 must carry the checkout assertion -- otherwise it demonstrates a "
+        "path with only one of the two foreign-commit catches"
+    )
+
+
 def test_no_gh_merge_push_is_ever_non_fast_forward() -> None:
     """The non-``--force`` rule (`:419-421`) must stay satisfiable, not just mandated.
 
@@ -825,8 +923,17 @@ def test_foreign_commit_is_refused_at_two_independent_points() -> None:
         merge.index("## Worked example — DRY RUN") : merge.index("## Worked example — Step 0")
     ]
     assert example.count('[ "$(git rev-parse HEAD)" = "$SHA901" ] || exit 1') == 1
-    # #902 starts its local rebase FROM the reviewed commit, which is the same binding.
-    assert 'checkout -B gh-merge-tree-902 "$SHA902"' in example
+    # #902 must get the SAME first catch, not a weaker one. Round 2 had it materialize from
+    # the literal "$SHA902" with no assertion at all: that passes vacuously and silently
+    # discards a foreign commit, leaving only the push catch. It now resolves the REMOTE tip
+    # and asserts, so BOTH dry-run sites demonstrate both catches.
+    assert "checkout -B gh-merge-tree-902 origin/<pr902-head-branch>" in example
+    assert example.count('= "$SHA902" ] || exit 1') >= 1, (
+        "#902 must carry the checkout assertion, like #901"
+    )
+    assert 'checkout -B gh-merge-tree-902 "$SHA902"' not in example, (
+        "materializing #902 from the literal reviewed SHA makes the assertion a tautology"
+    )
 
 
 def test_headrefoid_is_documented_as_a_remote_read() -> None:
