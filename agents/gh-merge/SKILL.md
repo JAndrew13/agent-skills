@@ -230,6 +230,17 @@ head SHA, run **no** Step 4 D7 gate, **no** `<full-suite>`, **no** `<version-fil
 does not carry — any push, or a Step 2.4 rebase, invalidates the prior pass and the PR needs a
 fresh one.
 
+**Carry the validated SHA forward to the merge — never re-read it.** Record the `headRefOid`
+you validated here as **`<reviewed-sha>`** and pass that literal value to `gh pr merge`'s
+`--match-head-commit` at Step 5.3. Validating a SHA here and then merging "the current head"
+minutes later is a **time-of-check/time-of-use race**: Step 4 (D7), Step 5.0, Step 5.1 and
+especially Step 5.2's `<full-suite>` (a **7–8 min** baseline) all run in between, and a push
+landing inside that window would otherwise be squashed to `main` having been neither reviewed
+at Step 3.1 nor covered by the full-suite gate — the #1150 race narrowed, not closed. Do
+**not** re-run `gh pr view --json headRefOid` at merge time to "refresh" it: re-reading
+re-opens the race it exists to close. If the head moved, GitHub refuses the merge and the PR
+re-enters Step 3.1 for the **new** SHA — a fresh review, a fresh full-suite run.
+
 **One check, three absence-causes.** A review that never started, one still **queued or
 running**, and one whose run **failed** all produce the same observable from here: no
 review-stage review names this head SHA. The routine's internal execution state is not visible
@@ -320,11 +331,35 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    rely on one end-of-wave run — or compose the wave on a shared integration branch and run it
    once before that branch merges to `main`.
 3. **Squash-merge to the target branch** once the order (Step 2), the review gate (Step 3),
-   D7 (Step 4), and the suite **on the merged tree** are all satisfied:
+   D7 (Step 4), and the suite **on the merged tree** are all satisfied — **pinned to the
+   exact SHA Step 3.1 validated**:
 
    ```sh
-   gh pr merge <pr> --squash --delete-branch
+   gh pr merge <pr> --squash --delete-branch --match-head-commit <reviewed-sha>
    ```
+
+   `--match-head-commit` is **not optional**: it is what binds the review gate to the merge.
+   `<reviewed-sha>` is the value carried forward from **Step 3.1**, never a fresh
+   `--json headRefOid` read — GitHub refuses the merge if the head has moved since, which is
+   precisely the desired outcome (an unreviewed, un-suite-gated push must not land). On
+   refusal, **do not force it through** and do not re-run the merge without the flag: return
+   to Step 3.1 for the new head SHA — it needs a fresh review and, because Step 5.2's tree is
+   now stale, a fresh `<full-suite>` run.
+
+   **When Step 6's version bump moved the head.** The bump commit is authored by *this*
+   procedure on top of `<reviewed-sha>`, so it legitimately changes the head. That is the only
+   permitted movement, and it must be **proved, not assumed**: before merging, assert the
+   pushed head's parent is exactly the SHA Step 3.1 validated, then pin the bump commit.
+
+   ```sh
+   git rev-parse HEAD^                                  # MUST equal <reviewed-sha> -> else a
+                                                        # foreign commit landed: STOP, back to Step 3.1
+   gh pr merge <pr> --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+   ```
+
+   Push the bump with a plain `git push` (**never** `--force`): a non-fast-forward rejection is
+   the same race being caught one step earlier. With no bump, `<reviewed-sha>` is the head and
+   is pinned directly.
 
    Squash is the repo convention. Merge standalones/epics to `main`; merge children to the
    epic branch.
@@ -507,11 +542,12 @@ gh pr diff 902 --name-only     # -> includes src/server/config_loader.py  => OVE
 
 # ============ PR #901 (first: smaller blast, owns the snapshot) ============
 # Step 3.1 REQUIRE a completed review of the CURRENT head SHA (absence blocks, never passes):
-gh pr view 901 --json headRefOid --jq .headRefOid         # -> the SHA about to land
+SHA901=$(gh pr view 901 --json headRefOid --jq .headRefOid)   # -> CAPTURE the SHA about to land
 gh api repos/<repo>/pulls/901/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
-#   -> a review-stage review with commit_id == that SHA MUST exist, else STOP (Step 3.1):
-#      in-flight (inside the 7-16 min window) -> wait and re-poll; absent past it -> surface.
+#   -> a verdict-summary review body naming that SHA MUST exist (commit_id corroborates),
+#      else STOP (Step 3.1): in-flight (inside the 7-16 min window) -> wait and re-poll;
+#      absent past it -> surface. $SHA901 is CARRIED FORWARD to the merge; never re-read.
 # Step 3.2 confirm the review gate at merge time (CONVENTIONS.md §8): the PR reached Validated
 #   via the Claude review+validation stages — THAT is the gate, independent of Codex:
 gh pr view 901 --json reviewDecision,statusCheckRollup   # still Validated (Claude stages) + CI green
@@ -530,8 +566,13 @@ git reset --hard                                    # discard full-suite fixture
 git add <version-file> && git commit -m "chore: bump version 1.0.NN -> 1.0.(NN+1)"
 git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
 git push origin HEAD:<pr901-head-branch>            # MUST push to the PR head; squash lands the REMOTE head
-# Step 5.3 squash-merge to main (lands the pushed head, bump included):
-gh pr merge 901 --squash --delete-branch
+# Step 5.3 squash-merge to main (lands the pushed head, bump included), PINNED to the SHA
+#   Step 3.1 validated. The bump commit above moved the head — prove that WE authored the only
+#   movement by asserting its parent is still the reviewed SHA, then pin the bump commit:
+[ "$(git rev-parse HEAD^)" = "$SHA901" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+gh pr merge 901 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
+#   -> if GitHub refuses (head moved), someone else pushed: STOP, do NOT retry without the
+#      flag — back to Step 3.1 for the new SHA (fresh review + fresh full suite).
 # Step 8 close the issue (the authoritative "done" signal), then retire the board item:
 gh issue close 801
 #   board has NO closed Status option -> either leave item at Validated (default), or remove it:
@@ -546,9 +587,11 @@ git -C <pr902-worktree> rebase origin/main          # re-apply config_loader.py 
 #   if the rebase materially changed #902's diff -> kick back to Reviewed (do NOT merge stale)
 # Step 3.1 the rebase MOVED the head SHA, so the prior review no longer names it — re-check,
 #   and do NOT merge until a review-stage review names the NEW head SHA (absence blocks):
-gh pr view 902 --json headRefOid --jq .headRefOid         # -> the POST-rebase SHA
+SHA902=$(gh pr view 902 --json headRefOid --jq .headRefOid)   # -> CAPTURE the POST-rebase SHA
 gh api repos/<repo>/pulls/902/reviews --paginate \
   --jq '.[] | select(.user.login=="<automation-login>") | {commit_id, body}'
+#   -> a verdict-summary review body must name the POST-rebase SHA; $SHA902 is CARRIED
+#      FORWARD to the merge below. Never re-read the head at merge time.
 # Step 3.2 confirm the review gate again after the rebase (still Validated + CI green; Step 3.3
 #   Codex is NOT a gate — do not wait on it or query for zero-unresolved-Codex-threads):
 gh pr view 902 --json reviewDecision,statusCheckRollup
@@ -562,8 +605,9 @@ git reset --hard                                    # discard full-suite fixture
 git add <version-file> && git commit -m "chore: bump version 1.0.(NN+1) -> 1.0.(NN+2)"
 git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
 git push origin HEAD:<pr902-head-branch>            # push to the PR head BEFORE merge, else the squash drops it
-# Step 5.3 squash-merge:
-gh pr merge 902 --squash --delete-branch
+# Step 5.3 squash-merge, PINNED to the Step 3.1-validated SHA (same parent proof as #901):
+[ "$(git rev-parse HEAD^)" = "$SHA902" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
+gh pr merge 902 --squash --delete-branch --match-head-commit "$(git rev-parse HEAD)"
 # Step 8 close the issue, then retire the board item (no closed Status option — leave at Validated or remove):
 gh issue close 802
 gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board-number>   # option (b); or leave at Validated

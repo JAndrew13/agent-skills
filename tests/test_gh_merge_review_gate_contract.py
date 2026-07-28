@@ -29,6 +29,7 @@ Follows the same read-from-disk structural-contract pattern as
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -152,6 +153,54 @@ def test_step3_collapses_never_run_in_flight_and_failed_into_one_check() -> None
     assert "stop and surface" in lowered
     assert "silent" in lowered
     assert "nothing alerts" in lowered
+
+
+def test_merge_is_pinned_to_the_step31_validated_sha() -> None:
+    """The gate must hold across its OWN enforcement window (the F1 TOCTOU finding).
+
+    Step 3.1 validates a head SHA, then Step 4 (D7), 5.0, 5.1 and 5.2's full suite (a 7-8
+    min baseline) all run before ``gh pr merge``. If the merge re-reads "the current head"
+    it lands code Step 3.1 never saw and the full suite never covered -- the #1150 race
+    narrowed, not closed. The binding is ``--match-head-commit`` carrying Step 3.1's SHA.
+    """
+    merge = _read(_MERGE)
+    step3 = _flat(_step3_section(merge))
+    lowered = step3.lower()
+
+    # (a) Step 3.1 carries the SHA forward rather than dropping it, and says why.
+    assert "carry the validated sha forward to the merge" in lowered
+    assert "--match-head-commit" in step3
+    assert "time-of-check/time-of-use" in lowered
+    assert "never re-read it" in lowered or "never re-read" in lowered
+
+    # (b) NO executable merge invocation anywhere in the file may be unpinned -- an
+    #     unpinned `gh pr merge <n> --squash` IS the hole, so the count must be zero.
+    invocations = re.findall(r"^\s*gh pr merge \S+ --squash[^\n]*", merge, re.MULTILINE)
+    assert invocations, "the merge command must appear in the skill"
+    unpinned = [i.strip() for i in invocations if "--match-head-commit" not in i]
+    assert not unpinned, f"every `gh pr merge` must pin the reviewed SHA: {unpinned}"
+
+    # (c) Step 5.3 states the flag is mandatory and that a refusal is NOT to be forced past.
+    step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
+    lowered5 = " ".join(step5.lower().split())
+    assert "not optional" in lowered5
+    assert "do not force it through" in lowered5
+    # The one legitimate head movement (this procedure's own bump commit) is PROVED, not assumed.
+    assert "git rev-parse head^" in lowered5
+
+
+def test_dry_run_example_pins_both_merge_sites_to_the_reviewed_sha() -> None:
+    # Wiring honesty: the copy-pastable DRY-RUN list is what an agent actually follows, so
+    # both of its merges must carry the pin and the parent proof -- not just the prose.
+    merge = _read(_MERGE)
+    example = merge[
+        merge.index("## Worked example — DRY RUN") : merge.index("## Worked example — Step 0")
+    ]
+    assert example.count("--match-head-commit") == 2
+    assert example.count('git rev-parse HEAD^') == 2, "each merge site proves its parent"
+    # The validated SHA is captured into a variable and reused, never re-read at merge time.
+    assert "SHA901=$(gh pr view 901 --json headRefOid" in example
+    assert "SHA902=$(gh pr view 902 --json headRefOid" in example
 
 
 def test_step3_head_sha_match_is_exact_so_a_new_push_invalidates_the_review() -> None:
