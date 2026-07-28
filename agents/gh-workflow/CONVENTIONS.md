@@ -438,15 +438,14 @@ Codex**. A skill references this section; it does not restate it.
 - **A completed review is required — absence of a review is a block, not a pass.** "No
   outstanding required-change findings" is **necessary but not sufficient**: a PR that was
   never reviewed also has zero findings, so counting threads alone cannot tell
-  *reviewed-and-clean* apart from *not-yet-reviewed*, and the gate passes **vacuously** (PR
-  #1150 merged 8 minutes after opening, mid-review; all nine threads landed after the merge,
-  and its epic squash carried no CI check-runs to serve as a second signal). The merge
-  therefore **also** requires positive evidence that the review stage **completed** a review
-  of the PR's **current head SHA** — evidence that a review which never started, is still
-  queued/running, or whose run **failed** (silently — nothing alerts) all equally fail to
-  provide. This requirement is enforced **exactly once**, in `gh-merge`'s **Step 3**, which
-  owns the head-SHA lookup, the refusal, and the wait-vs-surface disposition; this section
-  names the requirement and never restates those mechanics. It is a requirement on the
+  *reviewed-and-clean* apart from *not-yet-reviewed*, and the gate passes **vacuously** (the
+  #1150 incident). The merge therefore **also** requires positive evidence that the review
+  stage **completed** a review of the PR's **current head SHA**, and that the SHA so
+  validated is the one actually merged. This requirement is enforced **exactly once**, in
+  `gh-merge`'s **Step 3** — which owns the completion criterion, the head-SHA lookup, the
+  refusal, the absence-cause analysis and its dispositions, the merge-time SHA pin, and the
+  #1150 regression fixture. This section names the requirement and points there; it never
+  restates those mechanics. It is a requirement on the
   **Claude** review stage's own completion and does **not** re-gate Codex, which stays
   de-gated below.
 - **Codex is addressed if present, never required.** If a Codex review **has** posted

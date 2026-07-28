@@ -353,19 +353,72 @@ def test_conventions_section_8_states_requirement_and_points_at_step_3() -> None
 
 
 def test_conventions_section_8_does_not_restate_the_step_3_mechanics() -> None:
-    # The exact duplication debt CONVENTIONS.md exists to prevent (cf. §12 vs Step 0):
-    # §8 names the requirement; the lookup, refusal, and disposition live only in Step 3.
+    """§8 names the requirement; the mechanics AND the reasoning live only at Step 3 (F4).
+
+    Rebuilt after review: the original needle list covered only *commands* (`headRefOid`,
+    the two reads, `7-16`, `wait and re-poll`) -- which §8 never had -- so it passed by
+    construction, and passed on unpatched `main` too, carrying no information either way.
+    It certified AC6's "without restating" half while being unable to detect the three
+    things §8 had in fact grown a second copy of: the absence-cause taxonomy, the
+    failed-run-is-silent rationale, and the #1150 incident narrative.
+
+    Fixed two ways: a positive anchor (so the test fails when §8's requirement is absent,
+    i.e. on unpatched main -- it can no longer pass vacuously), and a needle list widened
+    to the REASONING, not just the commands.
+    """
     section8 = _flat(_section8(_read(_CONVENTIONS)))
+
+    # Positive anchor FIRST. Without this the assertions below are vacuously true whenever
+    # §8 says nothing at all -- exactly the vacuous-pass defect this whole PR exists to fix.
+    assert "enforced **exactly once**" in section8, (
+        "§8 must state the requirement before this guard can constrain how it states it"
+    )
+
     mechanics = (
+        # --- commands / lookup (original list) ---
         _REFUSAL_MECHANIC,
         _HEAD_SHA_READ,
         _REVIEWS_READ,
         "headRefOid",
         "7–16",
         "wait and re-poll",
+        "--match-head-commit",
+        # --- reasoning that belongs ONLY at the enforcement point (added after review) ---
+        "never started",  # (1) the three-absence-causes collapse
+        "queued/running",
+        "queued or running",
+        "nothing alerts",  # (2) the failed-run-is-silent rationale
+        "silently — nothing",
+        "check-runs",  # (3) the #1150 narrative + the zero-CI detail
+        "after opening, mid-review",
+        "nine threads",
+        "8 minutes",
+        "stop and surface",
     )
+    # NB: "verdict summary" is deliberately NOT a needle here -- §8's pre-existing 422
+    # recipe uses that phrase ("the overall verdict summary, never the sole carrier of a
+    # finding") and that block is byte-identical base-vs-head. Step 3.1 reuses §8's own
+    # vocabulary for the completion criterion; it does not duplicate §8's text.
     for mechanic in mechanics:
         assert mechanic not in section8, f"§8 must not restate Step 3's mechanics: {mechanic}"
+
+
+def test_step3_reasoning_is_canonical_only_in_gh_merge() -> None:
+    """Occurrence-count guard for the REASONING, mirroring the refusal-mechanic test (F4).
+
+    A §8-scoped negative assertion cannot fail on a tree where the feature is absent. These
+    can: each needle must exist in gh-merge AND nowhere else, so an empty result set (the
+    unpatched-main case) fails just as loudly as a duplicated one.
+    """
+    for needle in (
+        "One check, three absence-causes",
+        "nothing alerts on it",
+        "after opening, mid-review",
+    ):
+        found = _occurrences(needle)
+        assert set(found) == {_MERGE.relative_to(_ROOT)}, (
+            f"{needle!r} must be stated exactly once, at the enforcement point: {found}"
+        )
 
 
 def test_refusal_mechanic_is_canonical_only_in_gh_merge() -> None:
