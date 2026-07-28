@@ -264,8 +264,9 @@ re-enters Step 3.1 for the **new** SHA — a fresh review, a fresh full-suite ru
 
 **One check, three absence-causes.** A review that never started, one still **queued or
 running**, and one whose run **failed** all produce the same observable from here: no
-review-stage verdict summary names this head SHA. The routine's internal execution state is not visible
-in GitHub artifacts and you do not need it — the single check above already covers all three.
+review-stage verdict summary names this head SHA. The routine's internal execution state is
+not visible in GitHub artifacts and you do not need it — the single check above already
+covers all three.
 Only the **disposition** differs:
 
 **The rows are disjoint, and the age test decides — read row 2 first.** Both clauses in row 1
@@ -282,9 +283,10 @@ never post. Same invisibility class the requirement exists to close.
 | **Row 1 — still inside the window.** The head SHA is younger than that latency **and** (nothing posted yet **or** a review exists only for an **earlier** SHA on this PR). | A run is **in flight → wait and re-poll.** Never merge into a running review — that is exactly the #1150 race. Bound the waiting: each re-poll that ends with nothing new moves the PR to row 2. |
 
 **Fail loud and specific** — name the missing review, the head SHA it is missing for, and the
-disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage verdict summary names
-head SHA `<sha>` — the PR is unreviewed. Opened 8m ago, inside the 7–16 min review latency
-window → a review run is in flight; waiting and re-polling rather than racing it."*
+disposition you took, e.g.: *"Refusing to merge #1150: no completed review-stage verdict
+summary names head SHA `<sha>` — the PR is unreviewed. Opened 8m ago, inside the 7–16 min
+review latency window → a review run is in flight; waiting and re-polling rather than
+racing it."*
 
 **This is the Claude review stage's own completion — it is NOT a reinstated Codex gate.**
 Step 3.1 asks only whether *the required Claude review* ran against this head SHA. It never
@@ -645,8 +647,9 @@ gh project item-archive --id <PVTI-item-id-for-802> --owner <board-owner> <board
 **Dry-run verdict (what it prints, having executed nothing):** order = **#901 then #902**;
 reason = real `config_loader.py` overlap + dual snapshot regeneration force serialize, #901
 first as the smaller/snapshot-owning change, #902 rebased onto the new `main`; both carry a
-completed review-stage verdict summary naming their **current** head SHA (Step 3.1 — #902's is re-checked
-after the rebase moved its SHA) and are confirmed still `Validated` via the Claude
+completed review-stage verdict summary naming their **current** head SHA (Step 3.1 — #902's
+is re-checked after the rebase moved its SHA) and are confirmed still `Validated` via the
+Claude
 review+validation stages (no Codex posted, and none required — §8); neither trips the D7
 surface gate; two `main`-boundary full-suite runs (one per merge, not one shared); two
 **serial** patch bumps.
