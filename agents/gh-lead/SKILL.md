@@ -432,9 +432,11 @@ hand back up:
 - **Isolation.** Every dispatched worker/reviewer/validator/merger runs in its own
   worktree; nothing touches the operator's main worktree's branch state.
 - **Only gh-merge merges**, and it gates on the **live** state (CI, D7 sign-offs,
-  and the review gate — the PR reached `Validated`) at merge time — the lead
-  surfaces a stuck gate to the operator rather than pushing past it. Codex is not a
-  merge gate (§8).
+  and the review gate — a **completed** review of the PR's current head SHA, plus
+  the PR having reached `Validated`) at merge time — the lead surfaces a stuck gate
+  to the operator rather than pushing past it. Reaching `Validated` alone is **not**
+  the gate: absence of a review is a block, not a pass (§8). Codex is not a merge
+  gate (§8).
 - **Surface, don't override.** For anything `Unsafe!`/`Ignore!`/`Concept Idea`, any
   owed human gate (§7), or any decision that is genuinely the operator's, **stop and
   surface** rather than acting. An agent-settable boolean is not a gate (FABLE_06).

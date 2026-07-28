@@ -38,6 +38,10 @@ _MERGE = _AGENTS / "gh-merge" / "SKILL.md"
 _REVIEW = _AGENTS / "gh-review" / "SKILL.md"
 _CONVENTIONS = _AGENTS / "gh-workflow" / "CONVENTIONS.md"
 _REVIEW_ROUTINE = _ROOT / "routines" / "gh-review.routine.md"
+_GH_LEAD = _AGENTS / "gh-lead" / "SKILL.md"
+
+# The definition #1155 supersedes. Split so this file is not itself an occurrence.
+_SUPERSEDED_GATE_DEFINITION = "the review gate — the PR reached " + "`Validated`"
 
 # Step 3.1's ACTUAL input contract: the WRITER-side obligation that the review stage emits
 # the SHA in its terminal verdict-summary body. Everything the gate reads depends on this
@@ -419,6 +423,27 @@ def test_step3_reasoning_is_canonical_only_in_gh_merge() -> None:
         assert set(found) == {_MERGE.relative_to(_ROOT)}, (
             f"{needle!r} must be stated exactly once, at the enforcement point: {found}"
         )
+
+
+def test_no_file_carries_the_superseded_review_gate_definition() -> None:
+    """The old definition must not survive anywhere, least of all in a binding block (F5).
+
+    *"the review gate -- the PR reached `Validated`"* is precisely what #1155 kills:
+    reaching `Validated` is exactly what #1150 had done, and its gate still read clean.
+    The stale-by-omission fix was applied at gh-lead:377 but missed 58 lines below at
+    :435 -- inside the **non-negotiables** block, the more binding of the two statements.
+    Repo-wide occurrence count so a third copy cannot appear elsewhere later.
+    """
+    found = _occurrences(_SUPERSEDED_GATE_DEFINITION)
+    assert not found, (
+        f"superseded review-gate definition ('reached Validated' AS the gate) survives: {found}"
+    )
+
+    # ...and the non-negotiables block carries the corrected one, not merely the absence.
+    principles = _flat(_read(_GH_LEAD)[_read(_GH_LEAD).index("## Operating principles") :])
+    assert "**completed** review of the PR's current head SHA" in principles
+    assert "absence of a review is a block, not a pass" in principles
+    assert "Reaching `Validated` alone is **not** the gate" in principles
 
 
 def test_refusal_mechanic_is_canonical_only_in_gh_merge() -> None:
