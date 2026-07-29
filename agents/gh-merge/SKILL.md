@@ -436,8 +436,23 @@ Run the gates in order; each `main`-merge boundary gets exactly one full suite.
    `git cherry-pick`, `git commit --amend`, a second `gh pr checkout`, `fetch` + `reset --hard`
    — is **forbidden between Step 3.1 and the merge**: each either breaks an assertion on the
    healthy path or splices a commit no reviewer saw beneath the one the proof inspects.
-   `test_head_movement_commands_after_step31_are_a_closed_sanctioned_set` pins this list, so a
-   sixth mover cannot be added without failing the suite.
+   `test_head_movement_commands_after_step31_are_a_closed_sanctioned_set` enforces this as an
+   **allowlist, not a ban list** — that distinction is the whole guarantee. It scans every fenced
+   recipe in this file (comments included, because a `# OR: <command>` note in a recipe an agent
+   executes is an instruction), and **any** command whose git subcommand can move `HEAD` must
+   match one of the five sanctioned forms above or a declared non-mover. So a sixth mover fails
+   the suite **whether or not anyone thought to ban it by name**: `git pull`, `git cherry-pick`,
+   a *ref'd* `git reset --hard`, `git commit --amend`, a second `gh pr checkout`, a literal-SHA
+   `git checkout -B`, `git switch`, and `git merge` are each measured as caught. A ban list could
+   only ever catch the commands already written down — which is how five of those regrew silently
+   under an earlier revision of this guard. Matching is **exact and anchored, argument slots
+   included**, not just the verb: an allowlist leaks exactly as much as its loosest slot, so
+   `git commit -m "…" --amend` (the flag riding behind the bump message) and a bump branch
+   re-pinned on anything but `<reviewed-sha>` are caught as well. The one exemption is
+   **prohibition text**: a pure-comment line saying `do NOT` / `never` / `STOP` /
+   `ON REJECTION` may name a banned command, which is what lets the ON-REJECTION recovery
+   notes below quote `git pull`. Adding a genuine sixth mover therefore means editing the
+   sanctioned set in the test, deliberately — which is the point.
 
    Equivalently, run the gates against the **PR head after it has been rebased onto the current
    base** — the point is the tree you test is byte-for-byte what the squash will ship.

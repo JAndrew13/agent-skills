@@ -94,6 +94,31 @@ def _worked_example(text: str) -> str:
     return text[text.index(_WORKED_EXAMPLE_HEADING) :]
 
 
+def _fenced_blocks(text: str) -> list[list[tuple[int, str]]]:
+    """Every fenced block as its own ``[(lineno, line), ...]`` list, comments included.
+
+    Grouping matters for a mover that is legal once and illegal twice: a *second*
+    ``gh pr checkout`` inside one recipe re-materialises the PR head after it was already
+    proved equal to ``<reviewed-sha>``, while the canonical recipe and each dry run may
+    legitimately each carry their own first one.
+    """
+    blocks: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    in_fence = False
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            if in_fence:
+                blocks.append(current)
+                current = []
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            current.append((lineno, line))
+    if current:  # unterminated fence -- still scan it rather than silently dropping it
+        blocks.append(current)
+    return blocks
+
+
 def _fenced_lines(text: str) -> list[tuple[int, str]]:
     """``(lineno, line)`` for every line INSIDE a fenced block, comments included.
 
@@ -103,15 +128,138 @@ def _fenced_lines(text: str) -> list[tuple[int, str]]:
     deliberately exempt: the ban lists and the removal rationale must be able to name and
     quote the very patterns they forbid.
     """
-    out: list[tuple[int, str]] = []
-    in_fence = False
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if line.lstrip().startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            out.append((lineno, line))
-    return out
+    return [entry for block in _fenced_blocks(text) for entry in block]
+
+
+# ---------------------------------------------------------------------------
+# The closed HEAD-mover guard (F2 round 4)
+# ---------------------------------------------------------------------------
+# Rounds 1-3 each shipped a *needle list*: a scan for the one bad command the previous
+# round happened to produce. That certifies far more than it checks -- round 4 measured
+# seven regrowth forms (`git pull`, `cherry-pick`, a REF'd `reset --hard`, `commit
+# --amend`, a second `gh pr checkout`, a literal-SHA `checkout -B`, `git switch`) all
+# passing a suite whose docstring claimed the set was closed. So this inverts the test:
+# instead of enumerating what is banned, it enumerates what is ALLOWED and rejects
+# everything else. A mover the author never imagined now fails by default.
+
+#: git subcommands that can move ``HEAD``. This is a property of *git*, not of this
+#: document, which is what makes the set closable -- unlike a list of known-bad commands,
+#: it does not grow each time someone invents a new way to splice a commit. Subcommands
+#: that cannot move ``HEAD`` (``fetch``, ``add``, ``push``, ``rev-parse``, ``show``,
+#: ``diff-tree``, ``status``, ``clean``, ``restore``) are never scanned at all, so ordinary
+#: read-only recipe lines stay free.
+_HEAD_MOVING_SUBCOMMANDS = frozenset(
+    {
+        "am",
+        "bisect",
+        "checkout",
+        "cherry-pick",
+        "clone",
+        "commit",
+        "filter-branch",
+        "merge",
+        "pull",
+        "rebase",
+        "reset",
+        "revert",
+        "stash",
+        "switch",
+        "symbolic-ref",
+        "update-ref",
+        "worktree",
+    }
+)
+
+#: ``(what it is, pattern)`` for each sanctioned form, keyed to the five movers in Step
+#: 5.0's table. A HEAD-moving command must match one of these exactly.
+#:
+#: Every pattern is anchored at BOTH ends and its argument slots are as narrow as the real
+#: recipe lines allow. That is not fussiness -- an allowlist leaks exactly as much as its
+#: loosest slot, and two slots that looked harmless leaked a banned command each when
+#: measured (pinned below by ``test_the_sanctioned_mover_patterns_do_not_leak_a_banned_form``):
+#: a trailing ``.+`` on mover #5 swallowed ``git commit -m "…" --amend``, and a bare ``\S+``
+#: start-point on mover #4 accepted ``git checkout -B gh-merge-bump-<pr> origin/evil``. A
+#: loose allowlist is the same defect as a needle list, just harder to see.
+_SANCTIONED_MOVERS: tuple[tuple[str, str], ...] = (
+    (
+        "Prepare: branch the fresh worktree with no start-point -- renames the ref, HEAD stays put",
+        r"^git checkout -b [\w<>./-]+$",
+    ),
+    (
+        "movers #1/#2: materialise from a REMOTE ref -- so a foreign commit is caught, not adopted",
+        # NOT the bump branch: mover #4 owns that name and must pin <reviewed-sha>, so the
+        # generic remote-ref form must not offer it a second, laxer way to match.
+        r"^git checkout -B (?!gh-merge-bump-)\S+ origin/\S+$",
+    ),
+    ("mover #2: gh pr checkout -- the PR's current remote tip", r"^gh pr checkout \S+$"),
+    ("mover #3: the local throwaway rebase onto the current base", r"^git rebase origin/\S+$"),
+    (
+        "mover #4: re-pin the BUMP branch on the already-verified reviewed SHA",
+        # The start-point is the POINT of this mover -- `<reviewed-sha>` in the canonical
+        # recipe, the pinned `"$SHA<pr>"` variable in the dry runs. Any other ref re-pins
+        # the bump onto something no reviewer saw.
+        r'^git checkout -B gh-merge-bump-\S+ (?:<reviewed-sha>|"\$SHA\w+")$',
+    ),
+    (
+        "mover #5: the scoped bump commit",
+        # The closing quote must END the command: a trailing flag slot is how `--amend`
+        # -- forbidden by name in Step 5.0's own ban list -- got in.
+        r'^git commit -m "chore: bump [^"]*"$',
+    ),
+    ("non-mover: bare reset -- index and working tree only, HEAD stays put", r"^git reset --hard$"),
+    ("non-mover: restore tracked paths from the index", r"^git checkout -- \S+$"),
+    (
+        "Prepare: a SEPARATE worktree, detached on a REMOTE ref -- does not move this HEAD",
+        r"^git worktree add --detach \S+ origin/\S+$",
+    ),
+)
+
+#: A pure-comment line whose text *prohibits* rather than instructs is exempt. Four fenced
+#: ``git pull`` lines (the ON-REJECTION recovery text) and one ``git worktree add`` line are
+#: prohibitions, so a flat ban would false-positive on correct text. The exemption is
+#: deliberately narrow: it requires the line to be a comment AND to carry a prohibition
+#: marker, so round 3's ``# OR: git merge --no-ff`` -- a comment that *instructs* -- is
+#: still caught, and an executable command can never hide behind a trailing "never" remark.
+_PROHIBITION_MARKERS = ("do not", "never", "stop", "on rejection")
+
+_COMMAND_START = re.compile(r"\b(?:gh\s+pr\s+checkout|git\s+(?:-C\s+\S+\s+)?[a-z][a-z-]*)")
+
+
+def _head_moving_subcommand(command: str) -> str | None:
+    """The HEAD-moving subcommand a normalised command invokes, else ``None``."""
+    if re.match(r"^gh\s+pr\s+checkout\b", command):
+        return "checkout"
+    match = re.match(r"^git\s+([a-z][a-z-]*)\b", command)
+    if match and match.group(1) in _HEAD_MOVING_SUBCOMMANDS:
+        return match.group(1)
+    return None
+
+
+def _fenced_head_movers(line: str) -> list[str]:
+    """Every potentially HEAD-moving command on a fenced line -- code AND comment text.
+
+    Returns normalised commands (``-C <dir>`` prefix dropped, trailing comment and
+    surrounding shell punctuation removed) so they can be matched against the sanctioned
+    forms. Comments are scanned because round 3's defect *was* a comment.
+    """
+    movers: list[str] = []
+    for match in _COMMAND_START.finditer(line):
+        tail = re.split(r"&&|\|\||;|`", line[match.start() :])[0]
+        command = re.sub(r"\s+#.*$", "", tail)
+        command = re.sub(r"^git\s+-C\s+\S+\s+", "git ", command)
+        command = " ".join(command.split())
+        if _head_moving_subcommand(command):
+            movers.append(command)
+    return movers
+
+
+def _is_exempt_prohibition(line: str) -> bool:
+    """True for a pure-comment line that forbids a command rather than prescribing one."""
+    stripped = line.strip().lstrip(">").strip()
+    if not stripped.startswith("#"):
+        return False
+    lowered = stripped.lower()
+    return any(marker in lowered for marker in _PROHIBITION_MARKERS)
 
 
 def _occurrences(needle: str) -> dict[Path, int]:
@@ -791,6 +939,21 @@ def test_head_movement_commands_after_step31_are_a_closed_sanctioned_set() -> No
     procedure declares a closed list of HEAD movers, and the file may not contain a
     HEAD-moving git command outside it. A seventh mover fails here rather than in
     production.
+
+    Round 4 found that claim was still being certified by a *needle list* -- part (c) below
+    scans for ``git merge`` and nothing else, so seven measured regrowth forms (``git
+    pull``, ``cherry-pick``, a REF'd ``reset --hard``, ``commit --amend``, a second ``gh pr
+    checkout``, a literal-SHA ``checkout -B``, ``git switch``) each passed a green suite,
+    five of them banned by name in the prose the guard never reads. Part (d) is the fix and
+    the real closure: it inverts the test to an **allowlist**. Every command in a fenced
+    recipe whose git subcommand can move ``HEAD`` must match one of the sanctioned forms in
+    ``_SANCTIONED_MOVERS``; anything else fails, including a mover nobody thought to ban.
+    (c) is kept because its message names the specific round-3 defect.
+
+    The trap this has to avoid: ``git pull`` appears legitimately in four fenced lines of
+    the ON-REJECTION recovery text, so a flat ban false-positives on correct text. The
+    exemption is a pure-comment line carrying a prohibition marker -- narrow enough that
+    round 3's ``# OR: git merge --no-ff``, a comment that *instructs*, is still caught.
     """
     merge = _read(_MERGE)
     step5 = merge[merge.index("## Step 5 — Full-suite gate, then squash-merge") : merge.index("## Step 6 —")]
@@ -815,6 +978,31 @@ def test_head_movement_commands_after_step31_are_a_closed_sanctioned_set() -> No
     for banned in ("git merge", "git pull", "git cherry-pick", "git commit --amend"):
         assert f"`{banned}`" in forbidden_prose, f"the ban list must name: {banned}"
 
+    # (b2) The file's CLAIM must describe the mechanism the file actually has. N1's finding
+    #      was a true-sounding sentence sitting over a guard that read one needle, so the
+    #      claim text is pinned to the allowlist and to the single exemption it really has.
+    #      Edit the claim without the mechanism (or the reverse) and this fails.
+    assert "allowlist, not a ban list" in step5, (
+        "the file must say the guard is an allowlist -- describing it as a ban list is the "
+        "false claim N1 was raised on"
+    )
+    assert "whether or not anyone thought to ban it by name" in step5
+    assert "argument slots" in step5, (
+        "an allowlist leaks as much as its loosest argument slot, so the claim has to say "
+        "matching is exact, not verb-only"
+    )
+    # The one deliberate hole is disclosed where the claim is made, not left implicit.
+    for marker in ("do NOT", "never", "STOP", "ON REJECTION"):
+        assert f"`{marker}`" in step5, f"the prohibition-text exemption must name: {marker}"
+    # Everything the ban list names must also appear in the measured-caught sentence: the
+    # file may not forbid in prose what it never showed the guard catching.
+    claim = step5[step5.index("So a sixth mover fails") : step5.index("are each measured as caught")]
+    for banned in ("git merge", "git pull", "git cherry-pick", "git commit --amend"):
+        assert f"`{banned}`" in claim, (
+            f"`{banned}` is banned in prose but absent from the measured-caught list -- the "
+            "claim would outrun the evidence again"
+        )
+
     # (c) MECHANICAL: no `git merge` inside any fenced recipe -- INCLUDING in a comment.
     #     The defect took exactly that form: `gh pr checkout <pr>  # OR: git merge --no-ff
     #     origin/<pr-head-branch>`. A `# OR:` comment in a recipe an agent executes is an
@@ -832,10 +1020,121 @@ def test_head_movement_commands_after_step31_are_a_closed_sanctioned_set() -> No
         f"path, which is exactly how the round-3 defect was written: {offenders}"
     )
 
-    # (d) The removal is DELIBERATE and explained, not a silent drop: the file must say
+    # (d) MECHANICAL, AND THE ACTUAL CLOSURE: every HEAD-moving command in every fenced
+    #     recipe must match a SANCTIONED form. This is the allowlist half -- (c) can only
+    #     ever catch the one mover it names, so on its own it certifies a closed set while
+    #     reading a single member. Here anything that can move HEAD and is not one of the
+    #     five sanctioned movers (or a declared non-mover) fails, including movers nobody
+    #     thought to ban.
+    unsanctioned: list[str] = []
+    for lineno, line in _fenced_lines(merge):
+        if _is_exempt_prohibition(line):
+            continue
+        for command in _fenced_head_movers(line):
+            if not any(re.match(pattern, command) for _, pattern in _SANCTIONED_MOVERS):
+                unsanctioned.append(f"{lineno}: {command}")
+    assert not unsanctioned, (
+        "every HEAD-moving command in a gh-merge recipe must be one of the five sanctioned "
+        "movers in Step 5.0's table (or a declared non-mover); these are not, so the set the "
+        "file calls closed would silently grow. Sanctioned forms: "
+        + "; ".join(label for label, _ in _SANCTIONED_MOVERS)
+        + f". Unsanctioned: {unsanctioned}"
+    )
+
+    # (e) `gh pr checkout` materialises the PR head, so it is legal exactly ONCE per recipe:
+    #     a second one re-fetches the remote tip AFTER the `HEAD == <reviewed-sha>` proof,
+    #     re-opening the foreign-commit window the proof just closed. Per-block, because the
+    #     canonical recipe and each dry run legitimately carry their own first one.
+    repeat_checkouts = [
+        f"lines {[lineno for lineno, _ in hits]}"
+        for hits in (
+            [(lineno, line) for lineno, line in block if re.search(r"\bgh\s+pr\s+checkout\b", line)]
+            for block in _fenced_blocks(merge)
+        )
+        if len(hits) > 1
+    ]
+    assert not repeat_checkouts, (
+        "a fenced recipe may run `gh pr checkout` at most once -- a second one re-materialises "
+        f"the PR head after Step 5.0 already proved it equals <reviewed-sha>: {repeat_checkouts}"
+    )
+
+    # (f) The removal is DELIBERATE and explained, not a silent drop: the file must say
     #     the single-path checkout is intentional and why the alternative cannot return.
     assert "deliberately single-path" in step5
     assert "removed, not merely discouraged" in step5
+
+
+def test_the_sanctioned_mover_patterns_do_not_leak_a_banned_form() -> None:
+    """Guard the guard: an allowlist leaks as much as its loosest argument slot (N1 round 4).
+
+    Inverting the scan from a ban list to an allowlist is necessary but not sufficient --
+    a sloppy *pattern* re-opens the hole a sloppy *list* left, and does it invisibly,
+    because the file-level scan above still passes on unmodified text either way. Both
+    leaks below were live in the first draft of this guard and were found only by injecting
+    them; each admitted a command Step 5.0 bans **by name** three lines under the table:
+
+    * ``mover #5 = ^git commit -m .+$`` admitted ``git commit -m "chore: bump" --amend``
+      -- the trailing ``.+`` swallowed the forbidden flag.
+    * ``mover #4 = ^git checkout -B gh-merge-bump-\\S+ \\S+$`` (and the generic remote-ref
+      form) admitted ``git checkout -B gh-merge-bump-<pr> origin/evil`` -- re-pinning the
+      bump branch on a ref no reviewer ever saw, which is the whole thing mover #4 exists
+      to prevent.
+
+    So the patterns are pinned directly, not only through the file scan: a future
+    loosening fails here even while ``agents/gh-merge/SKILL.md`` is untouched and the
+    file-level assertion stays green. ``_LEAKY`` is the regression set; ``_REAL`` proves
+    the tightening did not break the recipe lines that must keep matching.
+    """
+    _LEAKY = (
+        ('git commit -m "chore: bump" --amend', "`--amend` hidden behind a trailing flag slot"),
+        ('git commit -m "chore: bump" --no-verify', "any trailing flag on the bump commit"),
+        ("git commit --amend -m \"chore: bump\"", "`--amend` before the message"),
+        ('git commit -am "chore: bump version"', "`-a` stages more than <version-file>"),
+        (
+            "git checkout -B gh-merge-bump-<pr> origin/evil",
+            "the bump branch re-pinned on a foreign remote ref",
+        ),
+        (
+            "git checkout -B gh-merge-bump-<pr> HEAD~3",
+            "the bump branch re-pinned on an arbitrary local ref",
+        ),
+        ("git checkout -B gh-merge-<session> some-local-branch", "materialised from a LOCAL ref"),
+        ("git checkout <reviewed-sha>", "the tautology checkout, in its barest form"),
+        ("git rebase --onto origin/main <reviewed-sha>", "a rebase that is not onto the base"),
+    )
+    leaked = [
+        f"{command!r} ({why}) matched {label!r}"
+        for command, why in _LEAKY
+        for label, pattern in _SANCTIONED_MOVERS
+        if re.match(pattern, command)
+    ]
+    assert not leaked, (
+        "a sanctioned-mover pattern admitted a command the closed set forbids -- the "
+        f"allowlist has re-grown a hole: {leaked}"
+    )
+
+    # ...and the tightening must not have broken the forms the recipes actually use.
+    _REAL = (
+        "git checkout -b gh-merge-<session>",
+        "git checkout -B gh-merge-<session> origin/main",
+        "git checkout -B gh-merge-tree-902 origin/<pr902-head-branch>",
+        "gh pr checkout <pr>",
+        "git rebase origin/main",
+        "git checkout -B gh-merge-bump-<pr> <reviewed-sha>",
+        'git checkout -B gh-merge-bump-901 "$SHA901"',
+        'git commit -m "chore: bump version 1.0.NN -> 1.0.(NN+1)"',
+        "git reset --hard",
+        "git worktree add --detach <merge-worktree> origin/main",
+    )
+    unmatched = [
+        command
+        for command in _REAL
+        if not any(re.match(pattern, command) for _, pattern in _SANCTIONED_MOVERS)
+    ]
+    assert not unmatched, (
+        "the allowlist was tightened past the recipes it has to permit -- these are real "
+        f"lines from gh-merge's own fences: {unmatched}"
+    )
 
 
 def test_pr_code_is_materialized_from_the_remote_tip_never_the_literal_reviewed_sha() -> None:
