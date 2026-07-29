@@ -435,6 +435,19 @@ Codex**. A skill references this section; it does not restate it.
   required-change (`[change-requested]` / BLOCKING) findings — i.e. its own findings are
   clean, or every one has been addressed through the `gh-fixer` loop. This transition
   does **not** wait on Codex in any way.
+- **A completed review is required — absence of a review is a block, not a pass.** "No
+  outstanding required-change findings" is **necessary but not sufficient**: a PR that was
+  never reviewed also has zero findings, so counting threads alone cannot tell
+  *reviewed-and-clean* apart from *not-yet-reviewed*, and the gate passes **vacuously** (the
+  #1150 incident). The merge therefore **also** requires positive evidence that the review
+  stage **completed** a review of the PR's **current head SHA**, and that the SHA so
+  validated is the one actually merged. This requirement is enforced **exactly once**, in
+  `gh-merge`'s **Step 3** — which owns the completion criterion, the head-SHA lookup, the
+  refusal, the absence-cause analysis and its dispositions, the merge-time SHA pin, and the
+  #1150 regression fixture. This section names the requirement and points there; it never
+  restates those mechanics. It is a requirement on the
+  **Claude** review stage's own completion and does **not** re-gate Codex, which stays
+  de-gated below.
 - **Codex is addressed if present, never required.** If a Codex review **has** posted
   actionable comments (`[change-requested]` or equivalent), treat them like any other
   valid review finding: fix / reply in-thread / resolve them through the normal

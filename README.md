@@ -71,8 +71,12 @@ installer (e.g. a `claude install` command that recursively copies
 `tests/` carries the structural contract tests that keep the pipeline's
 invariants intact — the #800 board-economy contract (injected item-ids, gated
 `item-list` fallback), the #834/#868/#869/#870 sprint-ledger + merge-ownership
-contracts, the #927 version-bump churn guard, and the conventions-scope /
-session-shape honesty guard. Run them with:
+contracts, the #927 version-bump churn guard, the #1155 completed-review merge
+gate (a merge needs positive evidence of a *completed* review — the review
+stage's verdict-summary body naming the PR's current head SHA — and that same
+SHA is pinned to the merge via `--match-head-commit`; Codex stays de-gated), and
+the conventions-scope / session-shape honesty guard.
+Run them with:
 
 ```sh
 python -m pytest tests/ -q

@@ -374,10 +374,10 @@ tightly-guarded merger**. The lead never merges inline. `gh-merge` owns the enti
 
 - plans a **collision-aware merge order** across all open `Validated` PRs (actual
   diff file-sets, hot-file serialize rules, rebase-and-re-verify);
-- **re-confirms the review gate at merge time** (CONVENTIONS.md §8 — the PR reached
-  `Validated` via the Claude review+validation stages; Codex is addressed if present
-  but never required) and the **D7 high-risk-surface human gate** (§7d — live-order /
-  `.env` / track-5);
+- **re-confirms the review gate at merge time** (CONVENTIONS.md §8 — a **completed**
+  review of the PR's current head SHA, plus the PR having reached `Validated` via the
+  Claude review+validation stages; Codex is addressed if present but never required)
+  and the **D7 high-risk-surface human gate** (§7d — live-order / `.env` / track-5);
 - runs the **full `pytest -q` suite once per merge-to-`main` boundary** on the
   actual merged tree, plus the fast gates (CONVENTIONS.md §9);
 - **squash-merges** (standalones/epics to `main`, children to the epic branch);
@@ -432,9 +432,11 @@ hand back up:
 - **Isolation.** Every dispatched worker/reviewer/validator/merger runs in its own
   worktree; nothing touches the operator's main worktree's branch state.
 - **Only gh-merge merges**, and it gates on the **live** state (CI, D7 sign-offs,
-  and the review gate — the PR reached `Validated`) at merge time — the lead
-  surfaces a stuck gate to the operator rather than pushing past it. Codex is not a
-  merge gate (§8).
+  and the review gate — a **completed** review of the PR's current head SHA, plus
+  the PR having reached `Validated`) at merge time — the lead surfaces a stuck gate
+  to the operator rather than pushing past it. Reaching `Validated` alone is **not**
+  the gate: absence of a review is a block, not a pass (§8). Codex is not a merge
+  gate (§8).
 - **Surface, don't override.** For anything `Unsafe!`/`Ignore!`/`Concept Idea`, any
   owed human gate (§7), or any decision that is genuinely the operator's, **stop and
   surface** rather than acting. An agent-settable boolean is not a gate (FABLE_06).
