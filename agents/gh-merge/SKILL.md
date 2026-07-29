@@ -624,7 +624,15 @@ commit stat:
    file and is the exact flag that caused #920.
 3. **Verify the bump commit is exactly one file before pushing:** `git show --stat HEAD` (or
    `git diff-tree --no-commit-id --name-only -r HEAD`) must list **only** `<version-file>`. If
-   anything else appears, **stop — do not push**; discard and redo the bump.
+   anything else appears, **stop — do not push**; discard and redo the bump **by re-running
+   mover #4** — `git checkout -B gh-merge-bump-<pr> <reviewed-sha>` — which drops the bad commit
+   and re-pins on the reviewed SHA in one sanctioned command, then redo steps 1–2. Use that form
+   and not the two that come to hand first: `git reset --hard HEAD^` is a **ref'd** reset, and the
+   non-mover exemption above covers only the **bare, ref-less** `git reset --hard`; and
+   `git commit --amend` is forbidden by name in the same list. Both would leave a correct
+   `HEAD^ == <reviewed-sha>`, so neither opens a hole — but both step outside the set Step 5.0
+   declares closed, and this procedure is meant to be executed top-down without that judgement
+   call.
 
 Squash-merge lands the **remote PR head** as-is, so pick one of these two placements — a
 local-only bump commit never lands and the merge would ship without the mandated patch bump:
@@ -793,7 +801,8 @@ git reset --hard                                    # discard full-suite fixture
 git checkout -B gh-merge-bump-901 "$SHA901"         # drop the local rebase; bump ON the reviewed SHA
 #   edit <version-file> version  1.0.NN -> 1.0.(NN+1)  on that commit, then stage ONLY that file:
 git add <version-file> && git commit -m "chore: bump version 1.0.NN -> 1.0.(NN+1)"
-git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
+git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP;
+#   discard by RE-RUNNING the mover #4 bump checkout above -- never a ref'd reset, never an amend
 # Step 5.3 prove WE authored the only head movement, then push and squash-merge to main.
 #   The assertion holds BY CONSTRUCTION (the bump was authored on $SHA901); it fails only if
 #   something ELSE moved the head:
@@ -850,7 +859,8 @@ git reset --hard                                    # discard full-suite fixture
 git checkout -B gh-merge-bump-902 "$SHA902"         # drop the local rebase; bump ON the reviewed SHA
 #   edit <version-file> version 1.0.(NN+1) -> 1.0.(NN+2), then stage ONLY that file:
 git add <version-file> && git commit -m "chore: bump version 1.0.(NN+1) -> 1.0.(NN+2)"
-git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP, discard, redo
+git show --stat HEAD                                # VERIFY exactly one file (<version-file>) -> else STOP;
+#   discard by RE-RUNNING the mover #4 bump checkout above -- never a ref'd reset, never an amend
 # Step 5.3 same parent proof as #901 (holds BY CONSTRUCTION), then push and squash-merge:
 [ "$(git rev-parse HEAD^)" = "$SHA902" ] || exit 1   # foreign commit landed -> STOP, back to Step 3.1
 BUMPED902=$(git rev-parse HEAD)                     # PIN the proved commit; never re-read at merge time

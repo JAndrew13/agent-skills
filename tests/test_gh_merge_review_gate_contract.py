@@ -1137,6 +1137,50 @@ def test_the_sanctioned_mover_patterns_do_not_leak_a_banned_form() -> None:
     )
 
 
+def test_bump_recovery_stays_inside_the_closed_head_mover_set() -> None:
+    """Step 6.3's "discard and redo the bump" must name an IN-SET recovery (N2 round 4).
+
+    The verify-then-discard step runs *after* ``git commit`` (mover #5), so "discard" is
+    itself a ``HEAD`` movement -- and its two natural implementations are both outside the
+    closed set: ``git reset --hard HEAD^`` is a **ref'd** reset (the non-mover exemption
+    covers only the bare, ref-less form, verified in a bare repo) and ``git commit --amend``
+    is forbidden by name three lines below the exemption.
+
+    No hole opens -- both land with ``HEAD^ == <reviewed-sha>``, so Step 5.3's parentage
+    assertion still fires on a foreign commit. This is pinned because the file cannot
+    declare the set closed while prescribing a step outside it: for a procedure whose value
+    is that an agent runs it top-down without judgement, that is a live ambiguity at the one
+    place the operator is already off the happy path. Re-running mover #4 discards the bad
+    commit and re-pins on the reviewed SHA in one sanctioned command, keeping the table at
+    five rows.
+    """
+    merge = _read(_MERGE)
+    step6 = merge[merge.index("## Step 6 — Version bump at merge (D6)") : merge.index("## Step 7 —")]
+    flat6 = _flat(step6)
+
+    assert "by re-running mover #4" in flat6, (
+        "Step 6.3's discard-and-redo must name the in-set recovery (mover #4) rather than "
+        "leaving the operator to reach for a ref'd reset or an amend"
+    )
+    assert "git checkout -B gh-merge-bump-<pr> <reviewed-sha>" in step6, (
+        "the recovery must spell out mover #4's command, not just cite its number"
+    )
+    # ...and it must say WHY the two commands that come to hand first are out of the set.
+    assert "git reset --hard HEAD^" in step6 and "bare, ref-less" in flat6, (
+        "the ref'd-vs-bare reset distinction is the whole reason the obvious recovery is "
+        "out of the set -- it has to be stated where the recovery is prescribed"
+    )
+    assert "`git commit --amend` is forbidden by name" in flat6
+
+    # Both dry runs restate the recovery, so the executable examples cannot drift from it.
+    for pr in ("901", "902"):
+        dry = merge[merge.index(f'git checkout -B gh-merge-bump-{pr} "$SHA{pr}"') :]
+        window = dry[: dry.index("Step 5.3")]
+        assert "RE-RUNNING the mover #4 bump checkout" in window, (
+            f"dry run #{pr} must point its discard-and-redo at mover #4"
+        )
+
+
 def test_pr_code_is_materialized_from_the_remote_tip_never_the_literal_reviewed_sha() -> None:
     """The checkout assertion must be a real catch, not a tautology (F2 round 3).
 
