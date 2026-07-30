@@ -349,6 +349,27 @@ the board Status) is **required** at these named gates. FABLE_06's core finding 
   any handoff is designed, never an emergency. **Operator override:** the operator may direct
   a larger sprint; the extra sessions are still planned up front. The cap **guides, it does
   not block.**
+- **Session budget (2026-07-30) — the cap counts the wrong thing on its own.** Sprint 23
+  ran 11 tickets against this cap, acknowledged the overage in its ledger, and still spent
+  **~36 hours on a single epic**. Ticket count did not predict that; **gate cycles** did.
+  So the cap gains two companions, both measured in things that actually move:
+  - **Declare a handoff seam before dispatching, in wall-clock terms.** Pick the seam at
+    planning time — "after wave A merges", "after the integration pass" — and write it into
+    the §11 checkpoint. On reaching it: finish the ticket in hand, checkpoint, release the
+    pen, **stop**. A session that runs until its context dies produces an emergency handoff,
+    which is the expensive kind. A designed handoff costs one cold boot.
+  - **One ticket may not consume a whole session.** If a single ticket has burned **three
+    review→fix→review cycles** or **four hours** without merging, stop and surface it to the
+    operator with what is blocking. Do not start a fourth cycle unprompted. Three cycles on
+    one ticket is evidence the ticket is mis-scoped or the finding is contested — both are
+    operator decisions, not grind-harder decisions.
+- **Checkpoint BEFORE a long operation, never only after.** Any step expected to exceed
+  ~5 minutes — full suite, review dispatch, integration-acceptance pass, browser sweep —
+  gets a §11 checkpoint write **first**, recording that it started and against which SHA.
+  A worker that dies mid-operation must be recoverable from durable state alone. This is
+  what makes a dead worker cheap: the successor reads the ledger and knows exactly what was
+  in flight, instead of inferring it from a stale transcript. (Recover a dead worker by
+  reading git refs and the ledger — never by restarting its work from scratch.)
 
 ### Hybrid claim protocol (shared-login session ownership)
 
