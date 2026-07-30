@@ -139,13 +139,24 @@ dispose it by the mechanic its channel supports**:
 
 ### 4. Deferred finding → tracked follow-up (no silent scope reduction)
 
-If a finding is **deliberately deferred rather than fixed** — genuinely
+**First, check the tag. `[minor]` findings are never deferred — they are fixed
+or dropped, here, now.** Per the 2026-07-29 D8 re-amendment (CONVENTIONS.md §10
+and §8), a `[minor]` finding may **not** become a follow-up ticket under any
+framing. Fix it on this branch if it is cheap, otherwise resolve the thread with
+a one-line "not taking this" and move on. Do not invoke `gh-create-issue` for a
+nit. If you believe a nit genuinely warrants a ticket, it was mis-tagged: say so
+in the thread and ask the review stage to re-tag it `[change-requested]` — do
+not file it yourself.
+
+The rest of this step applies to **`[change-requested]` findings only**.
+
+If such a finding is **deliberately deferred rather than fixed** — genuinely
 out-of-scope for this PR, or a larger change than the ticket's blast radius
 allows — you may not simply resolve-and-ignore it:
 
 - **File a tracked follow-up issue** for it via the `gh-create-issue` skill
-  (per the operator's D8 amendment, CONVENTIONS.md §10: every deferred
-  follow-up is a ticket, so effort is tracked — no untracked TODOs).
+  (per the operator's D8 amendment, CONVENTIONS.md §10: deferred *work* is a
+  ticket, so effort is tracked — no untracked TODOs).
 - **State the deferral loudly**, both in the reply (link the new issue) and, if
   material to the PR as a whole, in the PR description. Silent scope reduction —
   disposing a finding without a fix or a linked follow-up — is exactly what this

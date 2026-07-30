@@ -349,6 +349,27 @@ the board Status) is **required** at these named gates. FABLE_06's core finding 
   any handoff is designed, never an emergency. **Operator override:** the operator may direct
   a larger sprint; the extra sessions are still planned up front. The cap **guides, it does
   not block.**
+- **Session budget (2026-07-30) — the cap counts the wrong thing on its own.** Sprint 23
+  ran 11 tickets against this cap, acknowledged the overage in its ledger, and still spent
+  **~36 hours on a single epic**. Ticket count did not predict that; **gate cycles** did.
+  So the cap gains two companions, both measured in things that actually move:
+  - **Declare a handoff seam before dispatching, in wall-clock terms.** Pick the seam at
+    planning time — "after wave A merges", "after the integration pass" — and write it into
+    the §11 checkpoint. On reaching it: finish the ticket in hand, checkpoint, release the
+    pen, **stop**. A session that runs until its context dies produces an emergency handoff,
+    which is the expensive kind. A designed handoff costs one cold boot.
+  - **One ticket may not consume a whole session.** If a single ticket has burned **three
+    review→fix→review cycles** or **four hours** without merging, stop and surface it to the
+    operator with what is blocking. Do not start a fourth cycle unprompted. Three cycles on
+    one ticket is evidence the ticket is mis-scoped or the finding is contested — both are
+    operator decisions, not grind-harder decisions.
+- **Checkpoint BEFORE a long operation, never only after.** Any step expected to exceed
+  ~5 minutes — full suite, review dispatch, integration-acceptance pass, browser sweep —
+  gets a §11 checkpoint write **first**, recording that it started and against which SHA.
+  A worker that dies mid-operation must be recoverable from durable state alone. This is
+  what makes a dead worker cheap: the successor reads the ledger and knows exactly what was
+  in flight, instead of inferring it from a stale transcript. (Recover a dead worker by
+  reading git refs and the ledger — never by restarting its work from scratch.)
 
 ### Hybrid claim protocol (shared-login session ownership)
 
@@ -483,6 +504,25 @@ resolvable thread and defeats the mechanical gate.
   by the review stage (`<automation-login>`).** A top-level review body is only for the
   overall verdict summary, never the sole carrier of a finding. (A `<codex-reviewer>`
   thread is addressed-if-present but never gates — the de-gating above.)
+- **A `[minor]` finding dies with its PR (D8 re-amendment, 2026-07-29).** Fix it on the
+  branch it was raised on, or resolve the thread with a one-line "not taking this" and
+  move on. **Never file a `[minor]` as a follow-up ticket** — not "to stay tracked", not
+  under D8, not as a `[CHORE]` nit-bundle. If a nit is genuinely worth a ticket it was
+  never `[minor]`; re-tag it `[change-requested]` on the spot and let it gate. This is
+  deliberately lossy: nits that nobody will fix today are cheaper to lose than to carry.
+  Prose, docstring, comment-wording, and citation-accuracy findings are `[minor]` by
+  default and are the primary thing this rule is meant to stop from becoming tickets.
+- **On a head that already carries a D7 sign-off, a `[minor]` is DROPPED — never fixed.**
+  A push voids the head-bound D7 sign-off *and* the review, restarting **both** gates.
+  Spending a full gate cycle on a nit is the single largest source of sprint latency
+  measured on `kalshi-boy` (Sprint 23: ~36h for one epic, dominated by gate restarts).
+  The trade is not close: a wording fix is never worth re-running a D7 and a review.
+  Resolve the thread, say "dropped — D7-signed head", move on. Only a
+  `[change-requested]` finding may void a signed head, and only because it must.
+- **One review pass is the default.** A second pass is warranted only when the first
+  produced `[change-requested]` findings that were then fixed. Do not run pass-N reviews
+  hunting for residual nits on a branch whose blocking findings are already clean — that
+  loop terminates only when the reviewer runs out of ideas, not when the code is right.
 - **Recipe (own-account, verified):** one inline comment via
   `POST /repos/<repo>/pulls/<n>/comments` with `{body, commit_id:<PR head SHA>, path,
   line, side:"RIGHT"}`, or batch them in `POST .../pulls/<n>/reviews` with
@@ -534,7 +574,8 @@ competing cadence elsewhere.
 
 The FABLE_09 §1 decisions, with the operator's 2026-07-03 resolutions. **D1 is VETOED**
 (superseded by the Projects v2 board); **D5 and D8 are AMENDED** (D5 by the 2026-07-15
-Codex de-gating). D2–D4, D6, D7, D9, D10 confirmed.
+Codex de-gating; D8 twice — 2026-07-03, then the 2026-07-29 MVP scope cut).
+D2–D4, D6, D7, D9, D10 confirmed.
 
 | # | Decision (as adopted) | Status | Rationale |
 |---|---|---|---|
@@ -545,7 +586,7 @@ Codex de-gating). D2–D4, D6, D7, D9, D10 confirmed.
 | **D5** | ~~Codex hard pre-merge gate survives unchanged.~~ **AMENDED 2026-07-15 (Codex de-gating — "full Claude"):** the required pre-merge gate is the **Claude review stage's own findings** (§8); Codex is **addressed if it posts but never required and never blocks**. The 422 COMMENT-review workaround is retained. See §8. | **AMENDED** | The pipeline went Codex-independent; the former hard Codex gate is no longer required. History kept — the gate existed and was battle-tested before 2026-07-15; it is now de-gated, not deleted. |
 | D6 | **gh-merge owns the version bump** at merge-to-`main` (patch when `/src` `/scripts` `/agents` `/tests` touched; children exempt; workers never touch the line). Testing-cadence policy moves here. See §9. | Confirmed | Existing policy, already debugged across sprints (#30/#198). |
 | D7 | **Named human gates** (§7) — epic finalization; before `In Progress` for Large/Huge; always `Unsafe!`; before merge for live-order / `.env` / track-5 — plus runaway guards (sweeper dispatch cap, max concurrent workers, assignee-claim). | Confirmed | FABLE_06 §13: an agent-settable boolean is not a gate. Born with the review points the strategy workflow lacked. |
-| **D8** | **Automation is phased** (A: manual/lead-dispatched skills → B: one polling sweeper routine, dry-run first → C: optional Actions triggers). **AMENDED:** every follow-up a skill defers — spike findings, validation kick-backs, pilot friction, sweeper phase transitions — becomes **its own ticket**. No untracked TODOs. | **AMENDED** | One poller = one throttle point. The amendment closes the untracked-deferral hole so all deferred effort is a tracked ticket. |
+| **D8** | **Automation is phased** (A: manual/lead-dispatched skills → B: one polling sweeper routine, dry-run first → C: optional Actions triggers). **AMENDED 2026-07-03:** every follow-up a skill defers — spike findings, validation kick-backs, pilot friction, sweeper phase transitions — becomes **its own ticket**. No untracked TODOs. **RE-AMENDED 2026-07-29 (MVP scope cut):** the ticket-filing duty covers **deferred *work*** only — kick-backs, spike findings, epic children, out-of-scope changes, and unresolved **`[change-requested]`** findings. A **`[minor]` finding is fixed in the PR it was raised on, or dropped.** It is never filed as a ticket, never blocks a gate, and never survives the PR that raised it. See §8. | **AMENDED ×2** | One poller = one throttle point. The 2026-07-03 amendment closed the untracked-deferral hole. The 2026-07-29 re-amendment closes the hole *that* opened: filing every nit made the review stage a ticket generator whose output re-entered its own input. Measured on `kalshi-boy` at 2026-07-29 — 664 issues opened and 541 closed in six weeks, open count flat at 90–123 for a month, and **41% of the open backlog was `[minor]`-derived deferral records**. A nit is not deferred work; it is a judgement the reviewer already made and can make once. |
 | D9 | **Label cleanup rides DW-1:** `Bug` → `App Error`; `Feature`/`enhancement` → `New Feature`; `priority`/`high-priority`/`new-model` → **deleted** (undescribed, owner-less, only on closed issues). Migrate-then-delete, never delete first. Executed 2026-07-03 — see the migration record below. | Confirmed | The live label list already had undescribed near-duplicates; undescribed labels are what let taxonomy drift start. |
 | D10 | **gh-lead survives as the sprint orchestrator** (triage, wave planning, dispatching many tickets), refactored to *delegate* to the new skills. The sweeper is steady-state drip; the lead is for sprints. Both call the same skills; only gh-merge merges. | Confirmed | Preserves the working sprint muscle while removing the monolith's inlined copies of refine/review/merge. |
 
