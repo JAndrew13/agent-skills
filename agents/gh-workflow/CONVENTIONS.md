@@ -491,6 +491,17 @@ resolvable thread and defeats the mechanical gate.
   deliberately lossy: nits that nobody will fix today are cheaper to lose than to carry.
   Prose, docstring, comment-wording, and citation-accuracy findings are `[minor]` by
   default and are the primary thing this rule is meant to stop from becoming tickets.
+- **On a head that already carries a D7 sign-off, a `[minor]` is DROPPED — never fixed.**
+  A push voids the head-bound D7 sign-off *and* the review, restarting **both** gates.
+  Spending a full gate cycle on a nit is the single largest source of sprint latency
+  measured on `kalshi-boy` (Sprint 23: ~36h for one epic, dominated by gate restarts).
+  The trade is not close: a wording fix is never worth re-running a D7 and a review.
+  Resolve the thread, say "dropped — D7-signed head", move on. Only a
+  `[change-requested]` finding may void a signed head, and only because it must.
+- **One review pass is the default.** A second pass is warranted only when the first
+  produced `[change-requested]` findings that were then fixed. Do not run pass-N reviews
+  hunting for residual nits on a branch whose blocking findings are already clean — that
+  loop terminates only when the reviewer runs out of ideas, not when the code is right.
 - **Recipe (own-account, verified):** one inline comment via
   `POST /repos/<repo>/pulls/<n>/comments` with `{body, commit_id:<PR head SHA>, path,
   line, side:"RIGHT"}`, or batch them in `POST .../pulls/<n>/reviews` with
